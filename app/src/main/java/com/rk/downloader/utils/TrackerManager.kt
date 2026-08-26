@@ -10,7 +10,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
@@ -18,7 +17,8 @@ object TrackerManager {
     private const val TAG = "TrackerManager"
     private const val PREFS_NAME = "rk_tracker_prefs"
     private const val KEY_DEVICE_UUID = "device_uuid"
-
+    private const val KEY_INSTALL_TIME = "install_time"
+    
     private val client = OkHttpClient()
 
     fun getDeviceUuid(context: Context): String {
@@ -31,89 +31,53 @@ object TrackerManager {
         return uuid
     }
 
+    private fun getInstallTime(context: Context): Long {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        var installTime = prefs.getLong(KEY_INSTALL_TIME, 0L)
+        if (installTime == 0L) {
+            installTime = System.currentTimeMillis()
+            prefs.edit().putLong(KEY_INSTALL_TIME, installTime).apply()
+        }
+        return installTime
+    }
+
     suspend fun registerDevice(context: Context) = withContext(Dispatchers.IO) {
-        val supabaseUrl = AdminConfig.SUPABASE_URL
-        val anonKey = AdminConfig.SUPABASE_ANON_KEY
-        if (supabaseUrl.isEmpty() || supabaseUrl.contains("yourproject") || anonKey.isEmpty()) {
-            Log.d(TAG, "Supabase has default settings. Skipping tracking.")
+        val trackerUrl = AdminConfig.getServerUrl(context)
+        if (trackerUrl.isEmpty()) {
             return@withContext
         }
 
         try {
             val uuid = getDeviceUuid(context)
+            val installTime = getInstallTime(context)
+            val currentTime = System.currentTimeMillis()
             val model = Build.MODEL ?: "Unknown Device"
             val osVersion = "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"
-            val currentTime = System.currentTimeMillis()
 
-            val mediaType = "application/json; charset=utf-8".toMediaType()
-
-            // १. युझर आधीपासून नोंदणीकृत आहे का तपासा
-            val checkUrl = "$supabaseUrl/rest/v1/devices?uuid=eq.$uuid"
-            val checkRequest = Request.Builder()
-                .url(checkUrl)
-                .header("apikey", anonKey)
-                .header("Authorization", "Bearer $anonKey")
-                .get()
-                .build()
-
-            var exists = false
-            client.newCall(checkRequest).execute().use { response ->
-                if (response.isSuccessful) {
-                    val body = response.body?.string() ?: "[]"
-                    val jsonArray = JSONArray(body)
-                    exists = jsonArray.length() > 0
-                }
+            val postData = JSONObject().apply {
+                put("uuid", uuid)
+                put("model", model)
+                put("os", osVersion)
+                put("install_time", installTime)
+                put("last_active", currentTime)
             }
 
-            if (exists) {
-                // २. जुना युझर असेल तर फक्त last_active अपडेट करा (PATCH Request)
-                val patchData = JSONObject().apply {
-                    put("last_active", currentTime)
-                }
-                val patchUrl = "$supabaseUrl/rest/v1/devices?uuid=eq.$uuid"
-                val patchRequest = Request.Builder()
-                    .url(patchUrl)
-                    .header("apikey", anonKey)
-                    .header("Authorization", "Bearer $anonKey")
-                    .header("Content-Type", "application/json")
-                    .patch(patchData.toString().toRequestBody(mediaType))
-                    .build()
+            val mediaType = "application/json; charset=utf-8".toMediaType()
+            val requestBody = postData.toString().toRequestBody(mediaType)
+            val request = Request.Builder()
+                .url("$trackerUrl/track.php")
+                .post(requestBody)
+                .build()
 
-                client.newCall(patchRequest).execute().use { response ->
-                    if (response.isSuccessful) {
-                        Log.d(TAG, "Device last active updated in Supabase.")
-                    } else {
-                        Log.e(TAG, "Failed to patch device. Code: ${response.code}")
-                    }
-                }
-            } else {
-                // ३. नवीन युझर असेल तर नवीन रेकॉर्ड इन्सर्ट करा (POST Request)
-                val postData = JSONObject().apply {
-                    put("uuid", uuid)
-                    put("model", model)
-                    put("os", osVersion)
-                    put("install_time", currentTime)
-                    put("last_active", currentTime)
-                }
-                val postUrl = "$supabaseUrl/rest/v1/devices"
-                val postRequest = Request.Builder()
-                    .url(postUrl)
-                    .header("apikey", anonKey)
-                    .header("Authorization", "Bearer $anonKey")
-                    .header("Content-Type", "application/json")
-                    .post(postData.toString().toRequestBody(mediaType))
-                    .build()
-
-                client.newCall(postRequest).execute().use { response ->
-                    if (response.isSuccessful) {
-                        Log.d(TAG, "New device registered in Supabase.")
-                    } else {
-                        Log.e(TAG, "Failed to register device. Code: ${response.code}")
-                    }
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    Log.d(TAG, "Device registered/pinged server successfully.")
+                } else {
+                    Log.e(TAG, "Failed to ping server. Code: ${response.code}")
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Supabase tracking failed: ${e.message}", e)
+            Log.e(TAG, "Tracking failed: ${e.message}", e)
         }
     }
 }

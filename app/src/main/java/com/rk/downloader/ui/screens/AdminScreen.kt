@@ -11,6 +11,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import com.rk.downloader.config.AdminConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -34,10 +35,11 @@ data class DeviceRecord(
 fun AdminScreen(
     onBack: () -> Unit
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var isLoading by remember { mutableStateOf(true) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
-
+    
     var totalDevices by remember { mutableIntStateOf(0) }
     var activeDevices7Days by remember { mutableIntStateOf(0) }
     var deviceList by remember { mutableStateOf<List<DeviceRecord>>(emptyList()) }
@@ -48,26 +50,23 @@ fun AdminScreen(
         scope.launch {
             try {
                 val stats = withContext(Dispatchers.IO) {
-                    val supabaseUrl = AdminConfig.SUPABASE_URL
-                    val anonKey = AdminConfig.SUPABASE_ANON_KEY
-                    if (supabaseUrl.isEmpty() || supabaseUrl.contains("yourproject") || anonKey.isEmpty()) {
-                        throw Exception("Supabase is not configured. Configure it in AdminConfig.kt first.")
+                    val trackerUrl = AdminConfig.getServerUrl(context)
+                    if (trackerUrl.isEmpty()) {
+                        throw Exception("Local XAMPP tracker URL is not configured.")
                     }
 
                     val request = Request.Builder()
-                        .url("$supabaseUrl/rest/v1/devices?select=*")
-                        .header("apikey", anonKey)
-                        .header("Authorization", "Bearer $anonKey")
+                        .url("$trackerUrl/admin_api.php")
                         .build()
 
                     val client = OkHttpClient()
                     client.newCall(request).execute().use { response ->
-                        if (!response.isSuccessful) throw Exception("Database connection error: Code ${response.code}")
+                        if (!response.isSuccessful) throw Exception("Local server connection failed. Code ${response.code}")
                         val bodyStr = response.body?.string() ?: "[]"
-
+                        
                         val records = mutableListOf<DeviceRecord>()
                         val jsonArray = JSONArray(bodyStr)
-
+                        
                         for (i in 0 until jsonArray.length()) {
                             val deviceObj = jsonArray.getJSONObject(i)
                             records.add(
@@ -105,7 +104,7 @@ fun AdminScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Admin Dashboard") },
+                title = { Text("Admin Dashboard (XAMPP)") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")

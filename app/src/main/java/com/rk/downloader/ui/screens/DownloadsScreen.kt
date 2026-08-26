@@ -1,7 +1,7 @@
 package com.rk.downloader.ui.screens
 
-import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -32,16 +32,14 @@ fun DownloadsScreen(modifier: Modifier = Modifier) {
     var downloadedFiles by remember { mutableStateOf<List<DownloadedVideo>>(emptyList()) }
     var fileToDelete by remember { mutableStateOf<DownloadedVideo?>(null) }
 
-    // Reload files whenever the screen is composed
     fun loadFiles() {
-        downloadedFiles = DownloadManagerHelper.getDownloadedFiles()
+        downloadedFiles = DownloadManagerHelper.getDownloadedFiles(context)
     }
 
     LaunchedEffect(Unit) {
         loadFiles()
     }
 
-    // Format file sizes into human-readable text (MB, KB, etc.)
     fun formatSize(bytes: Long): String {
         if (bytes <= 0) return "0 B"
         val units = arrayOf("B", "KB", "MB", "GB")
@@ -50,16 +48,15 @@ fun DownloadsScreen(modifier: Modifier = Modifier) {
     }
 
     fun playFile(video: DownloadedVideo) {
-        val file = File(video.filePath)
-        if (!file.exists()) {
-            Toast.makeText(context, context.getString(R.string.toast_deleted), Toast.LENGTH_SHORT).show()
-            loadFiles()
-            return
-        }
-
         try {
-            val contentUri = FileProvider.getUriForFile(context, "com.rk.downloader.fileprovider", file)
-            val mimeType = if (file.extension.lowercase() == "mp3") "audio/*" else "video/*"
+            val contentUri = if (video.filePath.startsWith("content://")) {
+                Uri.parse(video.filePath)
+            } else {
+                val file = File(video.filePath)
+                FileProvider.getUriForFile(context, "com.rk.downloader.fileprovider", file)
+            }
+            
+            val mimeType = if (video.name.lowercase().endsWith(".mp3")) "audio/*" else "video/*"
             val intent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(contentUri, mimeType)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -71,16 +68,15 @@ fun DownloadsScreen(modifier: Modifier = Modifier) {
     }
 
     fun shareFile(video: DownloadedVideo) {
-        val file = File(video.filePath)
-        if (!file.exists()) {
-            Toast.makeText(context, "File does not exist", Toast.LENGTH_SHORT).show()
-            loadFiles()
-            return
-        }
-
         try {
-            val contentUri = FileProvider.getUriForFile(context, "com.rk.downloader.fileprovider", file)
-            val mimeType = if (file.extension.lowercase() == "mp3") "audio/*" else "video/*"
+            val contentUri = if (video.filePath.startsWith("content://")) {
+                Uri.parse(video.filePath)
+            } else {
+                val file = File(video.filePath)
+                FileProvider.getUriForFile(context, "com.rk.downloader.fileprovider", file)
+            }
+            
+            val mimeType = if (video.name.lowercase().endsWith(".mp3")) "audio/*" else "video/*"
             val intent = Intent(Intent.ACTION_SEND).apply {
                 type = mimeType
                 putExtra(Intent.EXTRA_STREAM, contentUri)
@@ -93,7 +89,7 @@ fun DownloadsScreen(modifier: Modifier = Modifier) {
     }
 
     fun deleteFile(video: DownloadedVideo) {
-        val success = DownloadManagerHelper.deleteFile(video)
+        val success = DownloadManagerHelper.deleteFile(context, video)
         if (success) {
             Toast.makeText(context, context.getString(R.string.toast_deleted), Toast.LENGTH_SHORT).show()
         } else {
@@ -200,11 +196,9 @@ fun DownloadsScreen(modifier: Modifier = Modifier) {
             }
         }
 
-        // Show banner ad at the bottom of the screen
         BannerAdView(modifier = Modifier.padding(top = 16.dp))
     }
 
-    // Delete confirmation dialog
     fileToDelete?.let { video ->
         AlertDialog(
             onDismissRequest = { fileToDelete = null },

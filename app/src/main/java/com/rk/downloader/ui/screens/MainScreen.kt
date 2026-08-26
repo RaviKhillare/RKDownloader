@@ -39,11 +39,9 @@ fun MainScreen(
     var isExtracting by remember { mutableStateOf(false) }
     var extractedVideoInfo by remember { mutableStateOf<VideoInfo?>(null) }
     
-    // Clipboard Auto-Detection dialog state
     var showClipboardDialog by remember { mutableStateOf(false) }
     var detectedClipboardUrl by remember { mutableStateOf("") }
 
-    // Listen to lifecycle ON_RESUME event to read clipboard link
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -70,19 +68,17 @@ fun MainScreen(
 
         isExtracting = true
         scope.launch {
-            val videoInfo = VideoExtractor.extractVideo(cleanUrl)
+            val videoInfo = VideoExtractor.extractVideo(context, cleanUrl)
             isExtracting = false
             if (videoInfo != null) {
                 extractedVideoInfo = videoInfo
             } else {
-                Toast.makeText(context, context.getString(R.string.error_parsing), Toast.LENGTH_LONG).show()
-                // Redirect user to the in-app Browser screen with the URL to download via WebView interception
+                Toast.makeText(context, "व्हिडिओ लिंक तपासा किंवा ब्राउझर टॅब वापरून डाऊनलोड करा.", Toast.LENGTH_LONG).show()
                 onNavigateToBrowser(cleanUrl)
             }
         }
     }
 
-    // Set text from initialUrl parameter if passed from another screen
     LaunchedEffect(initialUrl) {
         if (initialUrl.isNotEmpty()) {
             urlInput = initialUrl
@@ -184,17 +180,14 @@ fun MainScreen(
             }
         }
 
-        // Show banner ad at bottom of the main screen
         BannerAdView(modifier = Modifier.padding(top = 16.dp))
     }
 
-    // Modal bottom sheet when video info is extracted
     extractedVideoInfo?.let { videoInfo ->
         VideoInfoBottomSheet(
             videoInfo = videoInfo,
             onDismissRequest = { extractedVideoInfo = null },
             onDownloadSelected = { option ->
-                // Show Interstitial Ad before initiating download
                 if (activity != null) {
                     AdManager.showInterstitialAd(activity) {
                         DownloadManagerHelper.startDownload(
@@ -218,7 +211,6 @@ fun MainScreen(
         )
     }
 
-    // Clipboard detector dialog
     if (showClipboardDialog) {
         AlertDialog(
             onDismissRequest = { showClipboardDialog = false },

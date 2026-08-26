@@ -17,6 +17,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalContext
 import com.rk.downloader.R
 import com.rk.downloader.config.AdminConfig
 import com.rk.downloader.ui.components.BannerAdView
@@ -27,6 +29,7 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
     onNavigateToAdmin: () -> Unit
 ) {
+    val context = LocalContext.current
     val scrollState = rememberScrollState()
     
     // Tap-detection variables for admin entry
@@ -34,6 +37,10 @@ fun SettingsScreen(
     var showPasswordDialog by remember { mutableStateOf(false) }
     var passwordInput by remember { mutableStateOf("") }
     var isPasswordError by remember { mutableStateOf(false) }
+
+    // Dynamic Server URL Configuration
+    var serverUrl by remember { mutableStateOf(AdminConfig.getServerUrl(context)) }
+    var isEditingServerUrl by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -54,6 +61,71 @@ fun SettingsScreen(
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(bottom = 16.dp)
             )
+
+            // Server URL Configuration Card
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Server Configuration",
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    if (isEditingServerUrl) {
+                        OutlinedTextField(
+                            value = serverUrl,
+                            onValueChange = { serverUrl = it },
+                            label = { Text("Server URL") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = {
+                                    AdminConfig.setServerUrl(context, serverUrl)
+                                    isEditingServerUrl = false
+                                    Toast.makeText(context, "Server URL updated!", Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Save")
+                            }
+                            TextButton(
+                                onClick = {
+                                    serverUrl = AdminConfig.getServerUrl(context)
+                                    isEditingServerUrl = false
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Cancel")
+                            }
+                        }
+                    } else {
+                        Text(
+                            text = "Current Server: ${AdminConfig.getServerUrl(context)}",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(
+                            onClick = { isEditingServerUrl = true },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Edit Server Address")
+                        }
+                    }
+                }
+            }
 
             // Monetization Section
             Card(
