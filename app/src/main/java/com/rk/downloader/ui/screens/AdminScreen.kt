@@ -17,7 +17,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import org.json.JSONObject
+import org.json.JSONArray
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -37,7 +37,7 @@ fun AdminScreen(
     val scope = rememberCoroutineScope()
     var isLoading by remember { mutableStateOf(true) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
-    
+
     var totalDevices by remember { mutableIntStateOf(0) }
     var activeDevices7Days by remember { mutableIntStateOf(0) }
     var deviceList by remember { mutableStateOf<List<DeviceRecord>>(emptyList()) }
@@ -48,35 +48,35 @@ fun AdminScreen(
         scope.launch {
             try {
                 val stats = withContext(Dispatchers.IO) {
-                    val databaseUrl = AdminConfig.FIREBASE_DATABASE_URL
-                    if (databaseUrl.isEmpty() || databaseUrl.contains("default-rtdb")) {
-                        throw Exception("Firebase URL is not configured. Configure it in AdminConfig.kt first.")
+                    val supabaseUrl = AdminConfig.SUPABASE_URL
+                    val anonKey = AdminConfig.SUPABASE_ANON_KEY
+                    if (supabaseUrl.isEmpty() || supabaseUrl.contains("yourproject") || anonKey.isEmpty()) {
+                        throw Exception("Supabase is not configured. Configure it in AdminConfig.kt first.")
                     }
 
                     val request = Request.Builder()
-                        .url("$databaseUrl/devices.json")
+                        .url("$supabaseUrl/rest/v1/devices?select=*")
+                        .header("apikey", anonKey)
+                        .header("Authorization", "Bearer $anonKey")
                         .build()
 
                     val client = OkHttpClient()
                     client.newCall(request).execute().use { response ->
                         if (!response.isSuccessful) throw Exception("Database connection error: Code ${response.code}")
-                        val bodyStr = response.body?.string() ?: "{}"
-                        if (bodyStr == "null" || bodyStr.isEmpty()) return@withContext emptyList<DeviceRecord>()
-                        
+                        val bodyStr = response.body?.string() ?: "[]"
+
                         val records = mutableListOf<DeviceRecord>()
-                        val rootObj = JSONObject(bodyStr)
-                        val keys = rootObj.keys()
-                        
-                        while (keys.hasNext()) {
-                            val key = keys.next()
-                            val deviceObj = rootObj.getJSONObject(key)
+                        val jsonArray = JSONArray(bodyStr)
+
+                        for (i in 0 until jsonArray.length()) {
+                            val deviceObj = jsonArray.getJSONObject(i)
                             records.add(
                                 DeviceRecord(
-                                    uuid = key,
+                                    uuid = deviceObj.optString("uuid", ""),
                                     model = deviceObj.optString("model", "Unknown Device"),
                                     os = deviceObj.optString("os", "Unknown OS"),
-                                    installTime = deviceObj.optLong("installTime", 0L),
-                                    lastActive = deviceObj.optLong("lastActive", 0L)
+                                    installTime = deviceObj.optLong("install_time", 0L),
+                                    lastActive = deviceObj.optLong("last_active", 0L)
                                 )
                             )
                         }
@@ -139,7 +139,6 @@ fun AdminScreen(
                 }
             } else {
                 Column(modifier = Modifier.fillMaxSize()) {
-                    // Installs Summary Cards
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)

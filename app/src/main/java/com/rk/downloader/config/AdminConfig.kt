@@ -1,12 +1,12 @@
 package com.rk.downloader.config
 
-import java.util.Locale
-
 object AdminConfig {
-    // TODO: Paste your Firebase Realtime Database URL here (e.g., "https://yourproject-rtdb.firebaseio.com")
-    // Keep it empty or default for testing. Do not add a trailing slash.
-    const val FIREBASE_DATABASE_URL = "https://rkdownloader-default-rtdb.firebaseio.com"
+    // TODO: तुमची Supabase Project URL येथे पेस्ट करा
+    const val SUPABASE_URL = "https://qwdvujdgkdzzmcxfdcub.supabase.co"
 
-    // Secret key to access the hidden Admin Panel inside the app (Settings -> click Version 5 times)
-    const val ADMIN_SECRET_KEY = "admin123"
+    // TODO: तुमचा Supabase Anon/Public API Key येथे पेस्ट करा
+    const val SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF3ZHZ1amRna2R6em1jeGZkY3ViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc3NDI5MDcsImV4cCI6MjEwMzMxODkwN30.xZCaxY7TxoC0YV-i_8-4EAd4lBqH2hlVVLkh3-HAtcI"
+
+    // ॲडमिन पॅनेल उघडण्याचा पासवर्ड (Settings मधील Version वर ५ वेळा क्लिक केल्यावर विचारला जाईल)
+    const val ADMIN_SECRET_KEY = "sb_secret_KzrCFBV30m1jkEk0I3sMAg_JkunNnHK"
 }
