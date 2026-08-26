@@ -50,18 +50,21 @@ fun AdminScreen(
         scope.launch {
             try {
                 val stats = withContext(Dispatchers.IO) {
-                    val trackerUrl = AdminConfig.getServerUrl(context)
-                    if (trackerUrl.isEmpty()) {
-                        throw Exception("Local XAMPP tracker URL is not configured.")
+                    val supabaseUrl = AdminConfig.SUPABASE_URL
+                    val anonKey = AdminConfig.SUPABASE_ANON_KEY
+                    if (supabaseUrl.isEmpty() || supabaseUrl.contains("yourproject") || anonKey.isEmpty()) {
+                        throw Exception("Supabase configurations not found. Set them in AdminConfig.kt.")
                     }
 
                     val request = Request.Builder()
-                        .url("$trackerUrl/admin_api.php")
+                        .url("$supabaseUrl/rest/v1/devices?select=*")
+                        .header("apikey", anonKey)
+                        .header("Authorization", "Bearer $anonKey")
                         .build()
 
                     val client = OkHttpClient()
                     client.newCall(request).execute().use { response ->
-                        if (!response.isSuccessful) throw Exception("Local server connection failed. Code ${response.code}")
+                        if (!response.isSuccessful) throw Exception("Database connection error: Code ${response.code}")
                         val bodyStr = response.body?.string() ?: "[]"
                         
                         val records = mutableListOf<DeviceRecord>()
@@ -104,7 +107,7 @@ fun AdminScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Admin Dashboard (XAMPP)") },
+                title = { Text("Admin Dashboard (Supabase)") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")

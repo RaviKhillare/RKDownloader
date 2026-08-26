@@ -38,9 +38,9 @@ fun SettingsScreen(
     var passwordInput by remember { mutableStateOf("") }
     var isPasswordError by remember { mutableStateOf(false) }
 
-    // Dynamic Server URL Configuration
-    var serverUrl by remember { mutableStateOf(AdminConfig.getServerUrl(context)) }
-    var isEditingServerUrl by remember { mutableStateOf(false) }
+    // Dynamic Extractor URL Configuration
+    var extractorUrl by remember { mutableStateOf(AdminConfig.getExtractorUrl(context)) }
+    var isEditingExtractorUrl by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -62,7 +62,7 @@ fun SettingsScreen(
                 modifier = Modifier.padding(bottom = 16.dp)
             )
 
-            // Server URL Configuration Card
+            // Extractor URL Configuration Card
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -73,16 +73,16 @@ fun SettingsScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = "Server Configuration",
+                        text = "Cobalt Extractor Configuration",
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.titleMedium
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    if (isEditingServerUrl) {
+                    if (isEditingExtractorUrl) {
                         OutlinedTextField(
-                            value = serverUrl,
-                            onValueChange = { serverUrl = it },
-                            label = { Text("Server URL") },
+                            value = extractorUrl,
+                            onValueChange = { extractorUrl = it },
+                            label = { Text("Extractor API URL") },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true
                         )
@@ -93,9 +93,9 @@ fun SettingsScreen(
                         ) {
                             Button(
                                 onClick = {
-                                    AdminConfig.setServerUrl(context, serverUrl)
-                                    isEditingServerUrl = false
-                                    Toast.makeText(context, "Server URL updated!", Toast.LENGTH_SHORT).show()
+                                    AdminConfig.setExtractorUrl(context, extractorUrl)
+                                    isEditingExtractorUrl = false
+                                    Toast.makeText(context, "Extractor URL updated!", Toast.LENGTH_SHORT).show()
                                 },
                                 modifier = Modifier.weight(1f)
                             ) {
@@ -103,8 +103,8 @@ fun SettingsScreen(
                             }
                             TextButton(
                                 onClick = {
-                                    serverUrl = AdminConfig.getServerUrl(context)
-                                    isEditingServerUrl = false
+                                    extractorUrl = AdminConfig.getExtractorUrl(context)
+                                    isEditingExtractorUrl = false
                                 },
                                 modifier = Modifier.weight(1f)
                             ) {
@@ -113,15 +113,15 @@ fun SettingsScreen(
                         }
                     } else {
                         Text(
-                            text = "Current Server: ${AdminConfig.getServerUrl(context)}",
+                            text = "Current Extractor: ${AdminConfig.getExtractorUrl(context)}",
                             style = MaterialTheme.typography.bodyMedium
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Button(
-                            onClick = { isEditingServerUrl = true },
+                            onClick = { isEditingExtractorUrl = true },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("Edit Server Address")
+                            Text("Edit Extractor Address")
                         }
                     }
                 }

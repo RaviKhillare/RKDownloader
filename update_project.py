@@ -3,7 +3,7 @@ import subprocess
 import sys
 
 print("=======================================================")
-print("      RKDownloader - Project Update & Build Script")
+print("      RKDownloader - Cloud Project Update & Build Script")
 print("=======================================================")
 print("")
 
@@ -17,23 +17,26 @@ files_to_update[f"{base_path}/config/AdminConfig.kt"] = r"""package com.rk.downl
 import android.content.Context
 
 object AdminConfig {
+    // Cloud Supabase Connection Details
+    const val SUPABASE_URL = "https://qwdvujdgkdzzmcxfdcub.supabase.co"
+    const val SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF3ZHZ1amRna2R6em1jeGZkY3ViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc3NDI5MDcsImV4cCI6MjEwMzMxODkwN30.xZCaxY7TxoC0YV-i_8-4EAd4lBqH2hlVVLkh3-HAtcI"
+    const val ADMIN_SECRET_KEY = "sb_secret_KzrCFBV30m1jkEk0I3sMAg_JkunNnHK"
+
     private const val PREFS_NAME = "rk_admin_prefs"
-    private const val KEY_SERVER_URL = "server_url"
+    private const val KEY_EXTRACTOR_URL = "extractor_url"
     
-    // Default fallback address
-    private const val DEFAULT_URL = "http://10.31.60.251/rk_tracker"
+    // Default public Cobalt mirror (V10 compatible)
+    private const val DEFAULT_EXTRACTOR_URL = "https://cobalt.api.red.gd"
 
-    fun getServerUrl(context: Context): String {
+    fun getExtractorUrl(context: Context): String {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        return prefs.getString(KEY_SERVER_URL, DEFAULT_URL) ?: DEFAULT_URL
+        return prefs.getString(KEY_EXTRACTOR_URL, DEFAULT_EXTRACTOR_URL) ?: DEFAULT_EXTRACTOR_URL
     }
 
-    fun setServerUrl(context: Context, url: String) {
+    fun setExtractorUrl(context: Context, url: String) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().putString(KEY_SERVER_URL, url.trim().trimEnd('/')).apply()
+        prefs.edit().putString(KEY_EXTRACTOR_URL, url.trim().trimEnd('/')).apply()
     }
-
-    const val ADMIN_SECRET_KEY = "admin123"
 }
 """
 
@@ -50,6 +53,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
@@ -57,7 +61,6 @@ object TrackerManager {
     private const val TAG = "TrackerManager"
     private const val PREFS_NAME = "rk_tracker_prefs"
     private const val KEY_DEVICE_UUID = "device_uuid"
-    private const val KEY_INSTALL_TIME = "install_time"
     
     private val client = OkHttpClient()
 
@@ -71,53 +74,88 @@ object TrackerManager {
         return uuid
     }
 
-    private fun getInstallTime(context: Context): Long {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        var installTime = prefs.getLong(KEY_INSTALL_TIME, 0L)
-        if (installTime == 0L) {
-            installTime = System.currentTimeMillis()
-            prefs.edit().putLong(KEY_INSTALL_TIME, installTime).apply()
-        }
-        return installTime
-    }
-
     suspend fun registerDevice(context: Context) = withContext(Dispatchers.IO) {
-        val trackerUrl = AdminConfig.getServerUrl(context)
-        if (trackerUrl.isEmpty()) {
+        val supabaseUrl = AdminConfig.SUPABASE_URL
+        val anonKey = AdminConfig.SUPABASE_ANON_KEY
+        if (supabaseUrl.isEmpty() || supabaseUrl.contains("yourproject") || anonKey.isEmpty()) {
+            Log.w(TAG, "Supabase details not fully configured in AdminConfig.kt.")
             return@withContext
         }
 
         try {
             val uuid = getDeviceUuid(context)
-            val installTime = getInstallTime(context)
-            val currentTime = System.currentTimeMillis()
             val model = Build.MODEL ?: "Unknown Device"
             val osVersion = "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"
-
-            val postData = JSONObject().apply {
-                put("uuid", uuid)
-                put("model", model)
-                put("os", osVersion)
-                put("install_time", installTime)
-                put("last_active", currentTime)
-            }
+            val currentTime = System.currentTimeMillis()
 
             val mediaType = "application/json; charset=utf-8".toMediaType()
-            val requestBody = postData.toString().toRequestBody(mediaType)
-            val request = Request.Builder()
-                .url("$trackerUrl/track.php")
-                .post(requestBody)
+
+            // 1. Check if the device is already registered in Supabase
+            val checkUrl = "$supabaseUrl/rest/v1/devices?uuid=eq.$uuid"
+            val checkRequest = Request.Builder()
+                .url(checkUrl)
+                .header("apikey", anonKey)
+                .header("Authorization", "Bearer $anonKey")
                 .build()
 
-            client.newCall(request).execute().use { response ->
+            var exists = false
+            client.newCall(checkRequest).execute().use { response ->
                 if (response.isSuccessful) {
-                    Log.d(TAG, "Device registered/pinged server successfully.")
-                } else {
-                    Log.e(TAG, "Failed to ping server. Code: ${response.code}")
+                    val body = response.body?.string() ?: "[]"
+                    val jsonArray = JSONArray(body)
+                    exists = jsonArray.length() > 0
+                }
+            }
+
+            if (exists) {
+                // 2. Device exists: Perform PATCH request to update last_active timestamp
+                val patchData = JSONObject().apply {
+                    put("last_active", currentTime)
+                }
+                val patchUrl = "$supabaseUrl/rest/v1/devices?uuid=eq.$uuid"
+                val patchRequest = Request.Builder()
+                    .url(patchUrl)
+                    .header("apikey", anonKey)
+                    .header("Authorization", "Bearer $anonKey")
+                    .header("Content-Type", "application/json")
+                    .patch(patchData.toString().toRequestBody(mediaType))
+                    .build()
+
+                client.newCall(patchRequest).execute().use { response ->
+                    if (response.isSuccessful) {
+                        Log.d(TAG, "Device activity synchronized with Supabase.")
+                    } else {
+                        Log.e(TAG, "Failed to patch device. Code: ${response.code}")
+                    }
+                }
+            } else {
+                // 3. New Device: Perform POST request to insert new installation record
+                val postData = JSONObject().apply {
+                    put("uuid", uuid)
+                    put("model", model)
+                    put("os", osVersion)
+                    put("install_time", currentTime)
+                    put("last_active", currentTime)
+                }
+                val postUrl = "$supabaseUrl/rest/v1/devices"
+                val postRequest = Request.Builder()
+                    .url(postUrl)
+                    .header("apikey", anonKey)
+                    .header("Authorization", "Bearer $anonKey")
+                    .header("Content-Type", "application/json")
+                    .post(postData.toString().toRequestBody(mediaType))
+                    .build()
+
+                client.newCall(postRequest).execute().use { response ->
+                    if (response.isSuccessful) {
+                        Log.d(TAG, "New device registered in Supabase cloud.")
+                    } else {
+                        Log.e(TAG, "Failed to register device. Code: ${response.code}")
+                    }
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Tracking failed: ${e.message}", e)
+            Log.e(TAG, "Supabase tracking operation failed: ${e.message}", e)
         }
     }
 }
@@ -133,10 +171,11 @@ import com.rk.downloader.data.DownloadOption
 import com.rk.downloader.data.VideoInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
-import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 object VideoExtractor {
@@ -147,66 +186,108 @@ object VideoExtractor {
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    /**
-     * Queries the local XAMPP extract.php API to extract direct media streams using yt-dlp.
-     */
     suspend fun extractVideo(context: Context, url: String): VideoInfo? = withContext(Dispatchers.IO) {
-        val trackerUrl = AdminConfig.getServerUrl(context)
-        if (trackerUrl.isEmpty()) {
-            Log.e(TAG, "Local XAMPP server URL is not configured.")
+        val extractorUrl = AdminConfig.getExtractorUrl(context)
+        if (extractorUrl.isEmpty()) {
+            Log.e(TAG, "Cobalt Extractor URL is not configured.")
             return@withContext null
         }
 
+        // Try direct POST to root endpoint (Cobalt v10 syntax)
+        val result = tryExtractor(extractorUrl, url)
+        if (result != null) return@withContext result
+
+        // Fallback to POST /api/json (Cobalt v7 syntax)
+        val fallbackUrl = if (extractorUrl.endsWith("/")) "${extractorUrl}api/json" else "$extractorUrl/api/json"
+        return@withContext tryExtractor(fallbackUrl, url)
+    }
+
+    private fun tryExtractor(apiUrl: String, videoUrl: String): VideoInfo? {
         try {
-            val encodedUrl = URLEncoder.encode(url, "UTF-8")
-            val requestUrl = "$trackerUrl/extract.php?url=$encodedUrl"
+            val postData = JSONObject().apply {
+                put("url", videoUrl)
+                put("videoQuality", "720")
+                put("downloadMode", "auto")
+            }
+
+            val mediaType = "application/json; charset=utf-8".toMediaType()
+            val requestBody = postData.toString().toRequestBody(mediaType)
 
             val request = Request.Builder()
-                .url(requestUrl)
+                .url(apiUrl)
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .post(requestBody)
                 .build()
 
             client.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
-                    val bodyStr = response.body?.string() ?: return@use null
+                    val bodyStr = response.body?.string() ?: return null
                     val jsonObj = JSONObject(bodyStr)
                     val status = jsonObj.optString("status")
-                    
-                    if (status == "success") {
-                        val title = jsonObj.optString("title", "Social Media Video")
-                        val source = jsonObj.optString("sourceUrl", url)
-                        val optionsArray = jsonObj.optJSONArray("options") ?: return@use null
-                        
-                        val options = mutableListOf<DownloadOption>()
-                        for (i in 0 until optionsArray.length()) {
-                            val optObj = optionsArray.getJSONObject(i)
-                            val downloadUrl = optObj.optString("downloadUrl", "")
-                            if (downloadUrl.isNotEmpty()) {
-                                options.add(
-                                    DownloadOption(
-                                        quality = optObj.optString("quality", "Standard Quality"),
-                                        format = optObj.optString("format", "MP4"),
-                                        downloadUrl = downloadUrl
-                                    )
+
+                    // 1. Single file stream output (Cobalt v10 / v7)
+                    if (status == "stream" || status == "redirect") {
+                        val downloadUrl = jsonObj.optString("url")
+                        val filename = jsonObj.optString("filename", "Social Video")
+                        if (downloadUrl.isNotEmpty()) {
+                            val options = listOf(
+                                DownloadOption(
+                                    quality = "Video MP4 (Auto)",
+                                    format = "MP4",
+                                    downloadUrl = downloadUrl
                                 )
+                            )
+                            return VideoInfo(title = filename, sourceUrl = videoUrl, options = options)
+                        }
+                    } 
+                    // 2. Picker array output (Combined and separate streams)
+                    else if (status == "picker") {
+                        val pickerArray = jsonObj.optJSONArray("picker")
+                        val options = mutableListOf<DownloadOption>()
+                        if (pickerArray != null) {
+                            for (i in 0 until pickerArray.length()) {
+                                val item = pickerArray.getJSONObject(i)
+                                val downloadUrl = item.optString("url")
+                                if (downloadUrl.isNotEmpty()) {
+                                    val type = item.optString("type", "video")
+                                    val quality = item.optString("quality", "Auto")
+                                    options.add(
+                                        DownloadOption(
+                                            quality = if (type == "audio") "Audio Only (MP3)" else "Video MP4 ($quality)",
+                                            format = if (type == "audio") "MP3" else "MP4",
+                                            downloadUrl = downloadUrl
+                                        )
+                                    )
+                                }
                             }
                         }
-                        
                         if (options.isNotEmpty()) {
-                            return@withContext VideoInfo(title = title, sourceUrl = source, options = options)
+                            val title = jsonObj.optString("title", "Social Media Video")
+                            return VideoInfo(title = title, sourceUrl = videoUrl, options = options)
                         }
-                    } else {
-                        val message = jsonObj.optString("message", "Extraction failed")
-                        Log.e(TAG, "Extraction failed on local server: $message")
                     }
-                } else {
-                    Log.e(TAG, "HTTP error from XAMPP extraction: ${response.code}")
+                    // 3. Fallback for raw direct responses
+                    else if (jsonObj.has("url")) {
+                        val downloadUrl = jsonObj.optString("url")
+                        if (downloadUrl.isNotEmpty()) {
+                            val options = listOf(
+                                DownloadOption(
+                                    quality = "Video MP4 (Auto)",
+                                    format = "MP4",
+                                    downloadUrl = downloadUrl
+                                )
+                            )
+                            return VideoInfo(title = "Social Media Video", sourceUrl = videoUrl, options = options)
+                        }
+                    }
                 }
-                null
             }
         } catch (e: Exception) {
-            Log.e(TAG, "XAMPP local extraction query failed: ${e.message}", e)
+            Log.e(TAG, "Failed extraction query for $apiUrl: ${e.message}")
         }
-        return@withContext null
+        return null
     }
 }
 """
@@ -597,7 +678,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
 import com.rk.downloader.R
 import com.rk.downloader.data.DownloadedVideo
@@ -859,18 +939,21 @@ fun AdminScreen(
         scope.launch {
             try {
                 val stats = withContext(Dispatchers.IO) {
-                    val trackerUrl = AdminConfig.getServerUrl(context)
-                    if (trackerUrl.isEmpty()) {
-                        throw Exception("Local XAMPP tracker URL is not configured.")
+                    val supabaseUrl = AdminConfig.SUPABASE_URL
+                    val anonKey = AdminConfig.SUPABASE_ANON_KEY
+                    if (supabaseUrl.isEmpty() || supabaseUrl.contains("yourproject") || anonKey.isEmpty()) {
+                        throw Exception("Supabase configurations not found. Set them in AdminConfig.kt.")
                     }
 
                     val request = Request.Builder()
-                        .url("$trackerUrl/admin_api.php")
+                        .url("$supabaseUrl/rest/v1/devices?select=*")
+                        .header("apikey", anonKey)
+                        .header("Authorization", "Bearer $anonKey")
                         .build()
 
                     val client = OkHttpClient()
                     client.newCall(request).execute().use { response ->
-                        if (!response.isSuccessful) throw Exception("Local server connection failed. Code ${response.code}")
+                        if (!response.isSuccessful) throw Exception("Database connection error: Code ${response.code}")
                         val bodyStr = response.body?.string() ?: "[]"
                         
                         val records = mutableListOf<DeviceRecord>()
@@ -913,7 +996,7 @@ fun AdminScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Admin Dashboard (XAMPP)") },
+                title = { Text("Admin Dashboard (Supabase)") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -1081,9 +1164,9 @@ fun SettingsScreen(
     var passwordInput by remember { mutableStateOf("") }
     var isPasswordError by remember { mutableStateOf(false) }
 
-    // Dynamic Server URL Configuration
-    var serverUrl by remember { mutableStateOf(AdminConfig.getServerUrl(context)) }
-    var isEditingServerUrl by remember { mutableStateOf(false) }
+    // Dynamic Extractor URL Configuration
+    var extractorUrl by remember { mutableStateOf(AdminConfig.getExtractorUrl(context)) }
+    var isEditingExtractorUrl by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -1105,7 +1188,7 @@ fun SettingsScreen(
                 modifier = Modifier.padding(bottom = 16.dp)
             )
 
-            // Server URL Configuration Card
+            // Extractor URL Configuration Card
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1116,16 +1199,16 @@ fun SettingsScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = "Server Configuration",
+                        text = "Cobalt Extractor Configuration",
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.titleMedium
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    if (isEditingServerUrl) {
+                    if (isEditingExtractorUrl) {
                         OutlinedTextField(
-                            value = serverUrl,
-                            onValueChange = { serverUrl = it },
-                            label = { Text("Server URL") },
+                            value = extractorUrl,
+                            onValueChange = { extractorUrl = it },
+                            label = { Text("Extractor API URL") },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true
                         )
@@ -1136,9 +1219,9 @@ fun SettingsScreen(
                         ) {
                             Button(
                                 onClick = {
-                                    AdminConfig.setServerUrl(context, serverUrl)
-                                    isEditingServerUrl = false
-                                    Toast.makeText(context, "Server URL updated!", Toast.LENGTH_SHORT).show()
+                                    AdminConfig.setExtractorUrl(context, extractorUrl)
+                                    isEditingExtractorUrl = false
+                                    Toast.makeText(context, "Extractor URL updated!", Toast.LENGTH_SHORT).show()
                                 },
                                 modifier = Modifier.weight(1f)
                             ) {
@@ -1146,8 +1229,8 @@ fun SettingsScreen(
                             }
                             TextButton(
                                 onClick = {
-                                    serverUrl = AdminConfig.getServerUrl(context)
-                                    isEditingServerUrl = false
+                                    extractorUrl = AdminConfig.getExtractorUrl(context)
+                                    isEditingExtractorUrl = false
                                 },
                                 modifier = Modifier.weight(1f)
                             ) {
@@ -1156,15 +1239,15 @@ fun SettingsScreen(
                         }
                     } else {
                         Text(
-                            text = "Current Server: ${AdminConfig.getServerUrl(context)}",
+                            text = "Current Extractor: ${AdminConfig.getExtractorUrl(context)}",
                             style = MaterialTheme.typography.bodyMedium
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Button(
-                            onClick = { isEditingServerUrl = true },
+                            onClick = { isEditingExtractorUrl = true },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("Edit Server Address")
+                            Text("Edit Extractor Address")
                         }
                     }
                 }
