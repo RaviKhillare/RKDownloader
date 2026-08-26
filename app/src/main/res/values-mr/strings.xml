@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">RKDownloader</string>
+    
+    <!-- Navigation -->
+    <string name="tab_downloader">डाऊनलोडर</string>
+    <string name="tab_browser">ब्राउझर</string>
+    <string name="tab_downloads">डाऊनलोड्स</string>
+    <string name="tab_settings">सेटिंग्स</string>
+
+    <!-- Downloader -->
+    <string name="enter_url_hint">सोशल मीडिया व्हिडिओची लिंक येथे पेस्ट करा...</string>
+    <string name="btn_paste">पेस्ट करा</string>
+    <string name="btn_download">डाऊनलोड</string>
+    <string name="clipboard_detect_title">क्लिपबोर्डवर लिंक सापडली</string>
+    <string name="clipboard_detect_msg">आम्हाला तुमच्या क्लिपबोर्डमध्ये एक व्हिडिओ लिंक सापडली आहे. ती लिंक तपासू इच्छिता का?</string>
+    <string name="btn_yes">होय</string>
+    <string name="btn_no">नाही</string>
+    <string name="toast_invalid_url">कृपया एक वैध व्हिडिओ लिंक टाका</string>
+    <string name="toast_clipboard_empty">क्लिपबोर्ड रिकामी आहे किंवा त्यात कोणतीही लिंक नाही</string>
+    <string name="parsing_link">लिंक तपासली जात आहे, कृपया काही वेळ थांबा...</string>
+    <string name="error_parsing">व्हिडिओ तपशील काढण्यात अपयश आले. इन-ॲप ब्राउझर वापरून पहा.</string>
+
+    <!-- Bottom Sheet Quality/Format -->
+    <string name="choose_options">डाऊनलोड पर्याय निवडा</string>
+    <string name="label_quality">कॉलिटी (Quality):</string>
+    <string name="label_format">फॉरमॅट (Format):</string>
+    <string name="btn_start_download">डाऊनलोड सुरू करा</string>
+    <string name="toast_download_started">डाऊनलोड सुरू झाले! स्टेटस बार किंवा डाऊनलोड्स टॅबमध्ये तपासा.</string>
+
+    <!-- Browser -->
+    <string name="browser_search_hint">शोधा किंवा वेब ॲड्रेस टाका...</string>
+    <string name="btn_go">जा</string>
+    <string name="browser_instructions">कोणत्याही वेबसाईटला भेट द्या आणि व्हिडिओ प्ले करा. व्हिडिओ डिटेक्ट झाल्यावर डाऊनलोड बटण दिसेल.</string>
+    <string name="video_detected_title">व्हिडिओ सापडला!</string>
+    <string name="video_detected_desc">हा व्हिडिओ डाऊनलोड करण्यासाठी बटणावर टॅप करा.</string>
+
+    <!-- Downloads -->
+    <string name="no_downloads">अद्याप कोणतेही डाऊनलोड केलेले फाईल्स नाहीत.</string>
+    <string name="delete_confirm_title">फाईल डिलीट करा</string>
+    <string name="delete_confirm_msg">आपण खात्रीने ही फाईल कायमची डिलीट करू इच्छिता?</string>
+    <string name="toast_deleted">फाईल यशस्वीरित्या डिलीट करण्यात आली</string>
+    <string name="toast_delete_failed">फाईल डिलीट करण्यात अपयश आले</string>
+    <string name="btn_play">प्ले करा</string>
+    <string name="btn_share">शेअर करा</string>
+    <string name="btn_delete">डिलीट करा</string>
+
+    <!-- Settings -->
+    <string name="settings_title">सेटिंग्स</string>
+    <string name="admob_title">कमाई (AdMob)</string>
+    <string name="admob_desc">आपण AdMob बॅनर आणि इंटरस्टिशिअल जाहिराती लावून पैसे कमवू शकता. सध्या चाचणी (Test) जाहिराती चालू आहेत. बदल करण्यासाठी AdConfig.kt पहा.</string>
+    <string name="help_title">मदत आणि वापरण्याची पद्धत</string>
+    <string name="help_desc">१. इंस्टाग्राम, फेसबुक, टिकटॉक इत्यादीवरून व्हिडिओची लिंक कॉपी करा.\n२. RKDownloader उघडा आणि पेस्ट करा, किंवा ऑटो-डिटेक्ट वर क्लिक करा.\n३. डाऊनलोड बटण दाबा, कॉलिटी निवडा आणि व्हिडिओ डाऊनलोड होईल.\n४. किंवा, ब्राउझर टॅबचा वापर करून सर्च करा, व्हिडिओ प्ले करा आणि डाऊनलोड बटणावर क्लिक करा.</string>
+    <string name="disclaimer_title">अस्वीकरण (Disclaimer)</string>
+    <string name="disclaimer_desc">हे ॲप कोणत्याही सोशल मीडिया प्लॅटफॉर्मशी संलग्न किंवा प्रायोजित नाही. कॉपीराईट सामग्री डाऊनलोड करण्याची जबाबदारी केवळ वापरकर्त्याची असेल. कृपया लेखकांच्या अधिकारांचा आदर करा.</string>
+    <string name="app_version">व्हर्जन १.० (बिल्ड १)</string>
+    <string name="permissions_title">स्टोरेज परवानगी आवश्यक आहे</string>
+    <string name="permissions_desc">व्हिडिओ सेव्ह करण्यासाठी या ॲपला स्टोरेजची परवानगी हवी आहे. कृपया पुढे जाण्यासाठी परवानगी द्या.</string>
+    <string name="btn_grant">परवानगी द्या</string>
+</resources>

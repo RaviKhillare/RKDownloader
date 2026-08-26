@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">RKDownloader</string>
+    
+    <!-- Navigation -->
+    <string name="tab_downloader">Downloader</string>
+    <string name="tab_browser">Browser</string>
+    <string name="tab_downloads">Downloads</string>
+    <string name="tab_settings">Settings</string>
+
+    <!-- Downloader -->
+    <string name="enter_url_hint">Paste social media video link here...</string>
+    <string name="btn_paste">Paste</string>
+    <string name="btn_download">Download</string>
+    <string name="clipboard_detect_title">Clipboard Link Detected</string>
+    <string name="clipboard_detect_msg">We detected a video link in your clipboard. Would you like to parse it?</string>
+    <string name="btn_yes">Yes</string>
+    <string name="btn_no">No</string>
+    <string name="toast_invalid_url">Please enter a valid video URL</string>
+    <string name="toast_clipboard_empty">Clipboard is empty or does not contain a link</string>
+    <string name="parsing_link">Analyzing link, please wait...</string>
+    <string name="error_parsing">Failed to extract video details. Try using the In-App Browser.</string>
+
+    <!-- Bottom Sheet Quality/Format -->
+    <string name="choose_options">Choose Download Options</string>
+    <string name="label_quality">Quality:</string>
+    <string name="label_format">Format:</string>
+    <string name="btn_start_download">Start Download</string>
+    <string name="toast_download_started">Download started! Check status bar or Downloads tab.</string>
+
+    <!-- Browser -->
+    <string name="browser_search_hint">Search or enter web address...</string>
+    <string name="btn_go">Go</string>
+    <string name="browser_instructions">Browse any website and play the video. A download button will appear when a video is detected.</string>
+    <string name="video_detected_title">Video Detected!</string>
+    <string name="video_detected_desc">Tap the button to download this video.</string>
+
+    <!-- Downloads -->
+    <string name="no_downloads">No downloaded files yet.</string>
+    <string name="delete_confirm_title">Delete File</string>
+    <string name="delete_confirm_msg">Are you sure you want to delete this file permanently?</string>
+    <string name="toast_deleted">File deleted successfully</string>
+    <string name="toast_delete_failed">Failed to delete file</string>
+    <string name="btn_play">Play</string>
+    <string name="btn_share">Share</string>
+    <string name="btn_delete">Delete</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="admob_title">Monetization (AdMob)</string>
+    <string name="admob_desc">You can earn money by displaying AdMob Banner and Interstitial Ads. Test Ads are currently enabled. Switch to production Ads in AdConfig.kt.</string>
+    <string name="help_title">Help &amp; How to use</string>
+    <string name="help_desc">1. Copy a video link from Instagram, Facebook, TikTok, etc.\n2. Open RKDownloader and paste it, or use the auto-detect pop-up.\n3. Tap Download, select your quality, and the video will download.\n4. Alternatively, use the Browser tab to search, navigate to any site, play the video, and click the download button.</string>
+    <string name="disclaimer_title">Disclaimer</string>
+    <string name="disclaimer_desc">This app is not affiliated with, endorsed, or sponsored by any social media platform. Downloading copyrighted content is the sole responsibility of the user. Please respect creators\' rights.</string>
+    <string name="app_version">Version 1.0 (Build 1)</string>
+    <string name="permissions_title">Storage Permission Required</string>
+    <string name="permissions_desc">This app needs storage permissions to save videos on your device. Please grant the permission to continue.</string>
+    <string name="btn_grant">Grant Permission</string>
+</resources>

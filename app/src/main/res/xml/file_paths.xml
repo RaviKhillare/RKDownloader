@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Exposes the external public storage directory (Downloads, etc.) -->
+    <external-path name="external_files" path="." />
+</paths>
