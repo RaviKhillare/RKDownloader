@@ -2,8 +2,13 @@ package com.rk.downloader.ui.screens
 
 import android.app.Activity
 import android.widget.Toast
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -24,6 +29,7 @@ import com.rk.downloader.utils.ClipboardUtil
 import com.rk.downloader.utils.DownloadManagerHelper
 import com.rk.downloader.utils.VideoExtractor
 import kotlinx.coroutines.launch
+import java.net.URLEncoder
 
 @Composable
 fun MainScreen(
@@ -42,6 +48,9 @@ fun MainScreen(
     var showClipboardDialog by remember { mutableStateOf(false) }
     var detectedClipboardUrl by remember { mutableStateOf("") }
 
+    var showFallbackDialog by remember { mutableStateOf(false) }
+    var failedUrl by remember { mutableStateOf("") }
+
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -59,6 +68,23 @@ fun MainScreen(
         }
     }
 
+    fun getSaveFromUrl(url: String): String {
+        return try {
+            "https://en.savefrom.net/?url=" + URLEncoder.encode(url.trim(), "UTF-8")
+        } catch (e: Exception) {
+            "https://en.savefrom.net/"
+        }
+    }
+
+    fun openWithSaveFrom(url: String) {
+        val cleanUrl = url.trim()
+        if (cleanUrl.isEmpty()) {
+            Toast.makeText(context, "कृपया प्रथम व्हिडिओ लिंक टाका.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        onNavigateToBrowser(getSaveFromUrl(cleanUrl))
+    }
+
     fun parseUrl(url: String) {
         val cleanUrl = url.trim()
         if (cleanUrl.isEmpty()) {
@@ -73,8 +99,9 @@ fun MainScreen(
             if (videoInfo != null) {
                 extractedVideoInfo = videoInfo
             } else {
-                Toast.makeText(context, "व्हिडिओ लिंक तपासा किंवा ब्राउझर टॅब वापरून डाऊनलोड करा.", Toast.LENGTH_LONG).show()
-                onNavigateToBrowser(cleanUrl)
+                // When direct API fails, prompt user to download seamlessly via SaveFrom.net
+                failedUrl = cleanUrl
+                showFallbackDialog = true
             }
         }
     }
@@ -104,7 +131,7 @@ fun MainScreen(
                 style = MaterialTheme.typography.headlineLarge,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(bottom = 24.dp)
+                modifier = Modifier.padding(bottom = 20.dp)
             )
 
             OutlinedTextField(
@@ -116,8 +143,9 @@ fun MainScreen(
                 singleLine = true
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
+            // Primary Download Buttons Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -142,7 +170,7 @@ fun MainScreen(
 
                 Button(
                     onClick = { parseUrl(urlInput) },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1.3f),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     if (isExtracting) {
@@ -152,29 +180,86 @@ fun MainScreen(
                             strokeWidth = 2.dp
                         )
                     } else {
+                        Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
                         Text(stringResource(R.string.btn_download))
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
+            // SaveFrom.net Dedicated Direct Action Button
+            Button(
+                onClick = { openWithSaveFrom(urlInput) },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            ) {
+                Icon(Icons.Default.Language, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("SaveFrom.net द्वारे डाऊनलोड करा", fontWeight = FontWeight.Bold)
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Quick Third-Party Downloader Portals Card
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                 )
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(14.dp)) {
                     Text(
-                        text = stringResource(R.string.help_title),
+                        text = "थर्ड-पार्टी डाऊनलोड पोर्टल्स (Third-Party Services)",
                         fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.titleMedium
+                        style = MaterialTheme.typography.titleSmall
                     )
                     Spacer(modifier = Modifier.height(8.dp))
+                    
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        AssistChip(
+                            onClick = { openWithSaveFrom(urlInput) },
+                            label = { Text("SaveFrom.net") }
+                        )
+
+                        AssistChip(
+                            onClick = { onNavigateToBrowser("https://snapsave.app/") },
+                            label = { Text("SnapSave (FB/Insta)") }
+                        )
+
+                        AssistChip(
+                            onClick = {
+                                val clean = urlInput.trim()
+                                if (clean.contains("youtube.com") || clean.contains("youtu.be")) {
+                                    onNavigateToBrowser(clean.replace("youtube.com", "ssyoutube.com"))
+                                } else {
+                                    onNavigateToBrowser("https://ssyoutube.com/")
+                                }
+                            },
+                            label = { Text("SSYouTube") }
+                        )
+
+                        AssistChip(
+                            onClick = { onNavigateToBrowser("https://www.y2mate.com/") },
+                            label = { Text("Y2Mate") }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "• Instagram (Posts, Reels, Stories)\n• Facebook (Videos, Watch)\n• TikTok (No watermark)\n• Twitter / X (Video posts)\n• YouTube (Videos/Shorts)\n• Direct MP4/Web Links",
-                        style = MaterialTheme.typography.bodyMedium
+                        text = "• YouTube, Instagram, Facebook, TikTok, Twitter चे कोणतेही व्हिडिओ डाऊनलोड करता येतात.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -206,6 +291,38 @@ fun MainScreen(
                         quality = option.quality,
                         format = option.format
                     )
+                }
+            }
+        )
+    }
+
+    // Direct Extraction Fallback Dialog
+    if (showFallbackDialog) {
+        AlertDialog(
+            onDismissRequest = { showFallbackDialog = false },
+            title = { Text("थेट डाऊनलोड उपलब्ध नाही") },
+            text = {
+                Text("या व्हिडिओसाठी थेट API उपलब्ध नाही. हा व्हिडिओ SaveFrom.net किंवा SnapSave द्वारे सहज डाऊनलोड करता येईल. SaveFrom.net उघडायचे का?")
+            },
+            confirmButton = {
+                Button(onClick = {
+                    showFallbackDialog = false
+                    openWithSaveFrom(failedUrl)
+                }) {
+                    Text("SaveFrom.net ने उघडा")
+                }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = {
+                        showFallbackDialog = false
+                        onNavigateToBrowser("https://snapsave.app/")
+                    }) {
+                        Text("SnapSave")
+                    }
+                    TextButton(onClick = { showFallbackDialog = false }) {
+                        Text("रद्द करा")
+                    }
                 }
             }
         )
