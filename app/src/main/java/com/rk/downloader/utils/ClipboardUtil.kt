@@ -40,6 +40,11 @@ object ClipboardUtil {
                lowerUrl.contains("twitter.com") ||
                lowerUrl.contains("x.com") ||
                lowerUrl.contains("youtube.com") ||
-               lowerUrl.contains("youtu.be")
+               lowerUrl.contains("youtu.be") ||
+               lowerUrl.contains("pinterest.") ||
+               lowerUrl.contains("pin.it") ||
+               lowerUrl.contains("threads.net") ||
+               lowerUrl.contains("dailymotion.com") ||
+               lowerUrl.contains("dai.ly")
     }
 }

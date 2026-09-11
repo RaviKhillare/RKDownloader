@@ -164,7 +164,7 @@ files_to_update[f"{base_path}/utils/VideoExtractor.kt"] = r"""package com.rk.dow
 import android.content.Context
 import android.util.Log
 import com.rk.downloader.config.AdminConfig
-import com.rk.downloader.data.DownloadOption
+import com.rk.downloader.data.ExtractionResult
 import com.rk.downloader.data.VideoInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -175,117 +175,180 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-object VideoExtractor {
-    private const val TAG = "VideoExtractor"
-    
+/**
+ * Service interface for media stream extraction implementations.
+ */
+interface ExtractorService {
+    suspend fun extract(context: Context, url: String, platform: SupportedPlatform): ExtractionResult?
+}
+
+/**
+ * Primary Layer: Free Public REST API (Cobalt API mirrors with user-configurable endpoints).
+ */
+class PrimaryRestExtractor : ExtractorService {
     private val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
+        .connectTimeout(12, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
         .build()
 
-    suspend fun extractVideo(context: Context, url: String): VideoInfo? = withContext(Dispatchers.IO) {
-        val extractorUrl = AdminConfig.getExtractorUrl(context)
-        if (extractorUrl.isEmpty()) {
-            Log.e(TAG, "Cobalt Extractor URL is not configured.")
-            return@withContext null
+    override suspend fun extract(context: Context, url: String, platform: SupportedPlatform): ExtractionResult? = withContext(Dispatchers.IO) {
+        val configuredUrl = AdminConfig.getExtractorUrl(context)
+        
+        // Build an ordered list of viable public Cobalt REST API endpoints
+        val endpoints = mutableListOf<String>()
+        if (configuredUrl.isNotEmpty()) {
+            endpoints.add(configuredUrl)
+            val fallbackV7 = if (configuredUrl.endsWith("/")) "${configuredUrl}api/json" else "$configuredUrl/api/json"
+            endpoints.add(fallbackV7)
         }
+        endpoints.add("https://cobalt.api.red.gd")
+        endpoints.add("https://api.cobalt.tools")
 
-        // Try direct POST to root endpoint (Cobalt v10 syntax)
-        val result = tryExtractor(extractorUrl, url)
-        if (result != null) return@withContext result
+        for (endpoint in endpoints) {
+            try {
+                val postData = JSONObject().apply {
+                    put("url", url)
+                    put("videoQuality", "720")
+                    put("downloadMode", "auto")
+                }
 
-        // Fallback to POST /api/json (Cobalt v7 syntax)
-        val fallbackUrl = if (extractorUrl.endsWith("/")) "${extractorUrl}api/json" else "$extractorUrl/api/json"
-        return@withContext tryExtractor(fallbackUrl, url)
-    }
+                val mediaType = "application/json; charset=utf-8".toMediaType()
+                val requestBody = postData.toString().toRequestBody(mediaType)
 
-    private fun tryExtractor(apiUrl: String, videoUrl: String): VideoInfo? {
-        try {
-            val postData = JSONObject().apply {
-                put("url", videoUrl)
-                put("videoQuality", "720")
-                put("downloadMode", "auto")
-            }
+                val request = Request.Builder()
+                    .url(endpoint)
+                    .header("Accept", "application/json")
+                    .header("Content-Type", "application/json")
+                    // Desktop Chrome User-Agent bypasses Cloudflare anti-bot checks on public mirrors
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+                    .post(requestBody)
+                    .build()
 
-            val mediaType = "application/json; charset=utf-8".toMediaType()
-            val requestBody = postData.toString().toRequestBody(mediaType)
+                client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val bodyStr = response.body?.string() ?: return@use
+                        val jsonObj = JSONObject(bodyStr)
+                        val status = jsonObj.optString("status")
 
-            val request = Request.Builder()
-                .url(apiUrl)
-                .header("Accept", "application/json")
-                .header("Content-Type", "application/json")
-                // Sending a standard Chrome User-Agent prevents Cloudflare blocks on public instances
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                .post(requestBody)
-                .build()
-
-            client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
-                    val bodyStr = response.body?.string() ?: return null
-                    val jsonObj = JSONObject(bodyStr)
-                    val status = jsonObj.optString("status")
-
-                    // 1. Single file stream output (Cobalt v10 / v7)
-                    if (status == "stream" || status == "redirect") {
-                        val downloadUrl = jsonObj.optString("url")
-                        val filename = jsonObj.optString("filename", "Social Video")
-                        if (downloadUrl.isNotEmpty()) {
-                            val options = listOf(
-                                DownloadOption(
-                                    quality = "Video MP4 (Auto)",
+                        // 1. Single stream or redirect output
+                        if (status == "stream" || status == "redirect") {
+                            val downloadUrl = jsonObj.optString("url")
+                            val filename = jsonObj.optString("filename", "${platform.name.lowercase()}_video.mp4")
+                            if (downloadUrl.isNotEmpty()) {
+                                return@withContext ExtractionResult(
+                                    streamUrl = downloadUrl,
+                                    title = filename.substringBeforeLast(".").ifEmpty { "${platform.displayName} Video" },
+                                    quality = "720p HD",
                                     format = "MP4",
-                                    downloadUrl = downloadUrl
+                                    filename = filename
                                 )
-                            )
-                            return VideoInfo(title = filename, sourceUrl = videoUrl, options = options)
+                            }
                         }
-                    } 
-                    // 2. Picker array output (Combined and separate streams)
-                    else if (status == "picker") {
-                        val pickerArray = jsonObj.optJSONArray("picker")
-                        val options = mutableListOf<DownloadOption>()
-                        if (pickerArray != null) {
-                            for (i in 0 until pickerArray.length()) {
-                                val item = pickerArray.getJSONObject(i)
+                        // 2. Picker array output (formats list)
+                        else if (status == "picker") {
+                            val pickerArray = jsonObj.optJSONArray("picker")
+                            if (pickerArray != null && pickerArray.length() > 0) {
+                                val item = pickerArray.getJSONObject(0)
                                 val downloadUrl = item.optString("url")
                                 if (downloadUrl.isNotEmpty()) {
                                     val type = item.optString("type", "video")
-                                    val quality = item.optString("quality", "Auto")
-                                    options.add(
-                                        DownloadOption(
-                                            quality = if (type == "audio") "Audio Only (MP3)" else "Video MP4 ($quality)",
-                                            format = if (type == "audio") "MP3" else "MP4",
-                                            downloadUrl = downloadUrl
-                                        )
+                                    val quality = item.optString("quality", "HD")
+                                    return@withContext ExtractionResult(
+                                        streamUrl = downloadUrl,
+                                        title = "${platform.displayName} Video",
+                                        quality = quality,
+                                        format = if (type == "audio") "MP3" else "MP4",
+                                        filename = "${platform.name.lowercase()}_${System.currentTimeMillis()}.${if (type == "audio") "mp3" else "mp4"}"
                                     )
                                 }
                             }
                         }
-                        if (options.isNotEmpty()) {
-                            val title = jsonObj.optString("title", "Social Media Video")
-                            return VideoInfo(title = title, sourceUrl = videoUrl, options = options)
-                        }
-                    }
-                    // 3. Fallback for raw direct responses
-                    else if (jsonObj.has("url")) {
-                        val downloadUrl = jsonObj.optString("url")
-                        if (downloadUrl.isNotEmpty()) {
-                            val options = listOf(
-                                DownloadOption(
-                                    quality = "Video MP4 (Auto)",
+                        // 3. Fallback direct url property
+                        else if (jsonObj.has("url")) {
+                            val downloadUrl = jsonObj.optString("url")
+                            if (downloadUrl.isNotEmpty()) {
+                                return@withContext ExtractionResult(
+                                    streamUrl = downloadUrl,
+                                    title = "${platform.displayName} Video",
+                                    quality = "HD",
                                     format = "MP4",
-                                    downloadUrl = downloadUrl
+                                    filename = "${platform.name.lowercase()}_${System.currentTimeMillis()}.mp4"
                                 )
-                            )
-                            return VideoInfo(title = "Social Media Video", sourceUrl = videoUrl, options = options)
+                            }
                         }
                     }
                 }
+            } catch (e: Exception) {
+                Log.d("PrimaryRestExtractor", "Endpoint $endpoint failed: ${e.message}")
+            }
+        }
+        return@withContext null
+    }
+}
+
+/**
+ * Secondary Layer: Fallback headless WebResolver DOM/stream sniffer.
+ */
+class FallbackWebExtractor : ExtractorService {
+    override suspend fun extract(context: Context, url: String, platform: SupportedPlatform): ExtractionResult? {
+        return WebResolver.resolve(context, url, platform)
+    }
+}
+
+/**
+ * Unified Extractor maintaining a chain-of-responsibility:
+ * Primary (REST API) -> Secondary (Headless WebResolver).
+ */
+object VideoExtractor {
+    private const val TAG = "VideoExtractor"
+
+    private val primaryService: ExtractorService = PrimaryRestExtractor()
+    private val fallbackService: ExtractorService = FallbackWebExtractor()
+
+    /**
+     * Executes the unified extraction pipeline:
+     * 1. Detect platform using regex.
+     * 2. Attempt Primary REST API extraction.
+     * 3. Fallback to headless WebResolver if REST API fails or is rate-limited.
+     * 4. Returns standardized ExtractionResult or null.
+     */
+    suspend fun extract(context: Context, url: String): ExtractionResult? = withContext(Dispatchers.IO) {
+        val platform = SupportedPlatform.detect(url)
+        Log.d(TAG, "Starting extraction pipeline for platform: ${platform.displayName}, URL: $url")
+
+        // 1. Primary Layer: REST API
+        try {
+            val restResult = primaryService.extract(context, url, platform)
+            if (restResult != null && restResult.streamUrl.isNotEmpty()) {
+                Log.d(TAG, "Primary REST API extraction succeeded.")
+                return@withContext restResult
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed extraction query for $apiUrl: ${e.message}")
+            Log.w(TAG, "Primary REST API error: ${e.message}")
         }
-        return null
+
+        // 2. Secondary Layer: Headless WebResolver
+        Log.d(TAG, "Primary REST API failed or rate-limited. Initiating Secondary WebResolver...")
+        try {
+            val webResult = fallbackService.extract(context, url, platform)
+            if (webResult != null && webResult.streamUrl.isNotEmpty()) {
+                Log.d(TAG, "Secondary WebResolver extraction succeeded.")
+                return@withContext webResult
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Secondary WebResolver error: ${e.message}")
+        }
+
+        Log.w(TAG, "All automated extraction layers failed for: $url")
+        return@withContext null
+    }
+
+    /**
+     * Backward-compatible bridge returning legacy VideoInfo for UI components.
+     */
+    suspend fun extractVideo(context: Context, url: String): VideoInfo? {
+        val result = extract(context, url) ?: return null
+        return result.toVideoInfo(url)
     }
 }
 """
@@ -425,9 +488,10 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -446,6 +510,7 @@ import com.rk.downloader.ui.components.BannerAdView
 import com.rk.downloader.ui.components.VideoInfoBottomSheet
 import com.rk.downloader.utils.ClipboardUtil
 import com.rk.downloader.utils.DownloadManagerHelper
+import com.rk.downloader.utils.SupportedPlatform
 import com.rk.downloader.utils.VideoExtractor
 import kotlinx.coroutines.launch
 import java.net.URLEncoder
@@ -469,6 +534,7 @@ fun MainScreen(
 
     var showFallbackDialog by remember { mutableStateOf(false) }
     var failedUrl by remember { mutableStateOf("") }
+    var detectedPlatform by remember { mutableStateOf(SupportedPlatform.GENERIC) }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -495,15 +561,6 @@ fun MainScreen(
         }
     }
 
-    fun openWithSaveFrom(url: String) {
-        val cleanUrl = url.trim()
-        if (cleanUrl.isEmpty()) {
-            Toast.makeText(context, "कृपया प्रथम व्हिडिओ लिंक टाका.", Toast.LENGTH_SHORT).show()
-            return
-        }
-        onNavigateToBrowser(getSaveFromUrl(cleanUrl))
-    }
-
     fun parseUrl(url: String) {
         val cleanUrl = url.trim()
         if (cleanUrl.isEmpty()) {
@@ -512,13 +569,16 @@ fun MainScreen(
         }
 
         isExtracting = true
+        val platform = SupportedPlatform.detect(cleanUrl)
+        detectedPlatform = platform
+
         scope.launch {
             val videoInfo = VideoExtractor.extractVideo(context, cleanUrl)
             isExtracting = false
             if (videoInfo != null) {
                 extractedVideoInfo = videoInfo
             } else {
-                // When direct API fails, prompt user to download seamlessly via SaveFrom.net
+                // If both automated layers (REST API & headless WebResolver) fail, offer manual browser portal
                 failedUrl = cleanUrl
                 showFallbackDialog = true
             }
@@ -541,7 +601,8 @@ fun MainScreen(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f),
+                .weight(1f)
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -550,21 +611,29 @@ fun MainScreen(
                 style = MaterialTheme.typography.headlineLarge,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(bottom = 20.dp)
+                modifier = Modifier.padding(bottom = 16.dp)
             )
 
+            // Primary URL input
             OutlinedTextField(
                 value = urlInput,
                 onValueChange = { urlInput = it },
                 label = { Text(stringResource(R.string.enter_url_hint)) },
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                singleLine = true
+                shape = RoundedCornerShape(14.dp),
+                singleLine = true,
+                trailingIcon = {
+                    if (urlInput.isNotEmpty()) {
+                        IconButton(onClick = { urlInput = "" }) {
+                            Icon(Icons.Default.Clear, contentDescription = "Clear")
+                        }
+                    }
+                }
             )
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Primary Download Buttons Row
+            // Primary Download Buttons Row (Dual Mode)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -589,7 +658,7 @@ fun MainScreen(
 
                 Button(
                     onClick = { parseUrl(urlInput) },
-                    modifier = Modifier.weight(1.3f),
+                    modifier = Modifier.weight(1.4f),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     if (isExtracting) {
@@ -608,75 +677,98 @@ fun MainScreen(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // SaveFrom.net Dedicated Direct Action Button
-            Button(
-                onClick = { openWithSaveFrom(urlInput) },
+            // One-click Direct SaveFrom.net Web Action Button
+            FilledTonalButton(
+                onClick = {
+                    val clean = urlInput.trim()
+                    if (clean.isEmpty()) {
+                        Toast.makeText(context, "कृपया प्रथम व्हिडिओ लिंक टाका.", Toast.LENGTH_SHORT).show()
+                    } else {
+                        onNavigateToBrowser(getSaveFromUrl(clean))
+                    }
+                },
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                )
+                shape = RoundedCornerShape(12.dp)
             ) {
-                Icon(Icons.Default.Language, contentDescription = null, modifier = Modifier.size(20.dp))
+                Icon(Icons.Default.Language, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("SaveFrom.net द्वारे डाऊनलोड करा", fontWeight = FontWeight.Bold)
+                Text("SaveFrom.net द्वारे डाऊनलोड करा", fontWeight = FontWeight.SemiBold)
             }
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // Quick Third-Party Downloader Portals Card
+            // Material 3 Quick-Launch Platform Chips / Portal Buttons
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                )
+                ),
+                shape = RoundedCornerShape(16.dp)
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
                     Text(
-                        text = "थर्ड-पार्टी डाऊनलोड पोर्टल्स (Third-Party Services)",
+                        text = "सपोर्टेड प्लॅटफॉर्म्स (Quick Launch Portals)",
                         fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.titleSmall
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     
+                    // Row 1: Top Social Media
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        AssistChip(
-                            onClick = { openWithSaveFrom(urlInput) },
-                            label = { Text("SaveFrom.net") }
+                        SuggestionChip(
+                            onClick = { onNavigateToBrowser("https://www.youtube.com") },
+                            label = { Text("YouTube") }
                         )
-
-                        AssistChip(
-                            onClick = { onNavigateToBrowser("https://snapsave.app/") },
-                            label = { Text("SnapSave (FB/Insta)") }
+                        SuggestionChip(
+                            onClick = { onNavigateToBrowser("https://www.instagram.com") },
+                            label = { Text("Instagram") }
                         )
-
-                        AssistChip(
-                            onClick = {
-                                val clean = urlInput.trim()
-                                if (clean.contains("youtube.com") || clean.contains("youtu.be")) {
-                                    onNavigateToBrowser(clean.replace("youtube.com", "ssyoutube.com"))
-                                } else {
-                                    onNavigateToBrowser("https://ssyoutube.com/")
-                                }
-                            },
-                            label = { Text("SSYouTube") }
+                        SuggestionChip(
+                            onClick = { onNavigateToBrowser("https://www.facebook.com") },
+                            label = { Text("Facebook") }
                         )
-
-                        AssistChip(
-                            onClick = { onNavigateToBrowser("https://www.y2mate.com/") },
-                            label = { Text("Y2Mate") }
+                        SuggestionChip(
+                            onClick = { onNavigateToBrowser("https://www.tiktok.com") },
+                            label = { Text("TikTok") }
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // Row 2: Extended Platforms (Twitter, Pinterest, Threads, Dailymotion)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        SuggestionChip(
+                            onClick = { onNavigateToBrowser("https://x.com") },
+                            label = { Text("Twitter / X") }
+                        )
+                        SuggestionChip(
+                            onClick = { onNavigateToBrowser("https://www.pinterest.com") },
+                            label = { Text("Pinterest") }
+                        )
+                        SuggestionChip(
+                            onClick = { onNavigateToBrowser("https://www.threads.net") },
+                            label = { Text("Threads") }
+                        )
+                        SuggestionChip(
+                            onClick = { onNavigateToBrowser("https://www.dailymotion.com") },
+                            label = { Text("Dailymotion") }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
                     Text(
-                        text = "• YouTube, Instagram, Facebook, TikTok, Twitter चे कोणतेही व्हिडिओ डाऊनलोड करता येतात.",
+                        text = "• कोणत्याही प्लॅटफॉर्मची लिंक पेस्ट करून 'Download' दाबा किंवा थेट ब्राउझरमध्ये पाहण्यासाठी वरील बटण दाबा.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -687,6 +779,7 @@ fun MainScreen(
         BannerAdView(modifier = Modifier.padding(top = 16.dp))
     }
 
+    // Modal Bottom Sheet displaying parsed video format options
     extractedVideoInfo?.let { videoInfo ->
         VideoInfoBottomSheet(
             videoInfo = videoInfo,
@@ -715,18 +808,18 @@ fun MainScreen(
         )
     }
 
-    // Direct Extraction Fallback Dialog
+    // Tertiary Layer Fallback Dialog
     if (showFallbackDialog) {
         AlertDialog(
             onDismissRequest = { showFallbackDialog = false },
             title = { Text("थेट डाऊनलोड उपलब्ध नाही") },
             text = {
-                Text("या व्हिडिओसाठी थेट API उपलब्ध नाही. हा व्हिडिओ SaveFrom.net किंवा SnapSave द्वारे सहज डाऊनलोड करता येईल. SaveFrom.net उघडायचे का?")
+                Text("या व्हिडिओसाठी थेट API उपलब्ध नाही. हा व्हिडिओ SaveFrom.net किंवा SnapSave वेब पोर्टलद्वारे सहज डाऊनलोड करता येईल. ब्राउझरमध्ये उघडायचे का?")
             },
             confirmButton = {
                 Button(onClick = {
                     showFallbackDialog = false
-                    openWithSaveFrom(failedUrl)
+                    onNavigateToBrowser(getSaveFromUrl(failedUrl))
                 }) {
                     Text("SaveFrom.net ने उघडा")
                 }
@@ -747,6 +840,7 @@ fun MainScreen(
         )
     }
 
+    // Automatic Clipboard Detection Dialog
     if (showClipboardDialog) {
         AlertDialog(
             onDismissRequest = { showClipboardDialog = false },
@@ -793,6 +887,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -803,6 +899,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.rk.downloader.R
@@ -828,7 +925,7 @@ fun BrowserScreen(
     var webView: WebView? by remember { mutableStateOf(null) }
     var currentUrl by remember { mutableStateOf(initialUrl) }
     var searchInput by remember { mutableStateOf("") }
-    var pageTitle by remember { mutableStateOf("Downloader Web") }
+    var pageTitle by remember { mutableStateOf("Web Browser") }
     
     var loadingProgress by remember { mutableIntStateOf(0) }
     var isPageLoading by remember { mutableStateOf(false) }
@@ -873,32 +970,58 @@ fun BrowserScreen(
         verticalArrangement = Arrangement.SpaceBetween
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            // Navigation controls and address bar
+            // Material 3 TopAppBar with Navigation & Actions
+            TopAppBar(
+                title = {
+                    Column {
+                        Text(
+                            text = pageTitle,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = currentUrl,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                },
+                navigationIcon = {
+                    IconButton(
+                        onClick = { webView?.goBack() },
+                        enabled = webView?.canGoBack() == true
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(
+                        onClick = { webView?.goForward() },
+                        enabled = webView?.canGoForward() == true
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Forward")
+                    }
+                    IconButton(onClick = { webView?.reload() }) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Reload")
+                    }
+                }
+            )
+
+            // Address bar with clear and search actions
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(
-                    onClick = { webView?.goBack() },
-                    enabled = webView?.canGoBack() == true
-                ) {
-                    Icon(Icons.Default.ArrowBack, contentDescription = "Back")
-                }
-
-                IconButton(
-                    onClick = { webView?.goForward() },
-                    enabled = webView?.canGoForward() == true
-                ) {
-                    Icon(Icons.Default.ArrowForward, contentDescription = "Forward")
-                }
-
                 OutlinedTextField(
                     value = searchInput,
                     onValueChange = { searchInput = it },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(24.dp),
                     placeholder = { Text(stringResource(R.string.browser_search_hint)) },
                     singleLine = true,
@@ -906,10 +1029,9 @@ fun BrowserScreen(
                     keyboardActions = KeyboardActions(onSearch = {
                         loadWebAddress(searchInput)
                     }),
-                    colors = TextFieldDefaults.outlinedTextFieldColors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outline
-                    ),
+                    leadingIcon = {
+                        Icon(Icons.Default.Search, contentDescription = "Search", tint = MaterialTheme.colorScheme.primary)
+                    },
                     trailingIcon = {
                         if (searchInput.isNotEmpty()) {
                             IconButton(onClick = { searchInput = "" }) {
@@ -918,22 +1040,14 @@ fun BrowserScreen(
                         }
                     }
                 )
-
-                IconButton(onClick = { loadWebAddress(searchInput) }) {
-                    Icon(Icons.Default.Search, contentDescription = "Go")
-                }
-
-                IconButton(onClick = { webView?.reload() }) {
-                    Icon(Icons.Default.Refresh, contentDescription = "Reload")
-                }
             }
 
-            // Quick Third-Party Provider Switcher Bar
+            // Quick Platform & Downloader Switcher Chips
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                    .padding(horizontal = 12.dp, vertical = 2.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 AssistChip(
@@ -952,10 +1066,8 @@ fun BrowserScreen(
                 )
 
                 AssistChip(
-                    onClick = {
-                        loadWebAddress("https://snapsave.app/")
-                    },
-                    label = { Text("SnapSave (FB/Insta)") }
+                    onClick = { loadWebAddress("https://snapsave.app/") },
+                    label = { Text("SnapSave") }
                 )
 
                 AssistChip(
@@ -970,24 +1082,35 @@ fun BrowserScreen(
                 )
 
                 AssistChip(
-                    onClick = {
-                        loadWebAddress("https://www.y2mate.com/")
-                    },
+                    onClick = { loadWebAddress("https://www.y2mate.com/") },
                     label = { Text("Y2Mate") }
                 )
 
                 AssistChip(
-                    onClick = {
-                        loadWebAddress("https://www.google.com")
-                    },
-                    label = { Text("Google") }
+                    onClick = { loadWebAddress("https://x.com") },
+                    label = { Text("Twitter / X") }
+                )
+
+                AssistChip(
+                    onClick = { loadWebAddress("https://www.pinterest.com") },
+                    label = { Text("Pinterest") }
+                )
+
+                AssistChip(
+                    onClick = { loadWebAddress("https://www.threads.net") },
+                    label = { Text("Threads") }
+                )
+
+                AssistChip(
+                    onClick = { loadWebAddress("https://www.dailymotion.com") },
+                    label = { Text("Dailymotion") }
                 )
             }
 
-            // Loader Progress Bar
+            // Page Loading Linear Progress Indicator
             if (isPageLoading && loadingProgress < 100) {
                 LinearProgressIndicator(
-                    progress = loadingProgress / 100f,
+                    progress = { loadingProgress / 100f },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(3.dp),
@@ -996,7 +1119,7 @@ fun BrowserScreen(
             }
         }
 
-        // Main WebView area
+        // Main WebView area with floating download bar
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1013,7 +1136,7 @@ fun BrowserScreen(
                             useWideViewPort = true
                             loadWithOverviewMode = true
                             mediaPlaybackRequiresUserGesture = false
-                            // Prevent popup windows from hijacking or freezing webview
+                            // Block intrusive popup windows that hijack or freeze webview
                             setSupportMultipleWindows(false)
                             javaScriptCanOpenWindowsAutomatically = false
                             allowFileAccess = true
@@ -1021,7 +1144,7 @@ fun BrowserScreen(
                         }
 
                         // Native DownloadListener: Intercepts all file download requests from SaveFrom.net, SnapSave, etc.
-                        setDownloadListener { downloadUrl, userAgent, contentDisposition, mimetype, contentLength ->
+                        setDownloadListener { downloadUrl, _, contentDisposition, mimetype, _ ->
                             val guessedName = URLUtil.guessFileName(downloadUrl, contentDisposition, mimetype)
                             val sanitizedTitle = guessedName.substringBeforeLast(".").ifEmpty { "Video_${System.currentTimeMillis()}" }
                             val ext = if (guessedName.endsWith(".mp3", true) || mimetype?.contains("audio") == true) "mp3" else "mp4"
@@ -1045,7 +1168,7 @@ fun BrowserScreen(
                                     format = ext.uppercase()
                                 )
                             }
-                            Toast.makeText(context, "डाऊनलोड सुरू झाले आहे...", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "डाऊनलोड सुरू झाले आहे... (Download started)", Toast.LENGTH_SHORT).show()
                         }
                         
                         webViewClient = object : WebViewClient() {
@@ -1069,7 +1192,7 @@ fun BrowserScreen(
                                 val reqUrl = request?.url?.toString() ?: return false
                                 val lower = reqUrl.lowercase()
 
-                                // Directly download if URL points to an actual media stream/file
+                                // Directly download if URL points to an actual media stream or download URL
                                 if (lower.endsWith(".mp4") || lower.endsWith(".mp3") || lower.endsWith(".m4a") ||
                                     (lower.contains("googlevideo.com") && lower.contains("videoplayback")) ||
                                     (lower.contains("download") && (lower.contains(".mp4") || lower.contains("mime=video")))
@@ -1084,7 +1207,7 @@ fun BrowserScreen(
                                         quality = "Direct",
                                         format = ext.uppercase()
                                     )
-                                    Toast.makeText(context, "डाऊनलोड सुरू झाले आहे...", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "डाऊनलोड सुरू झाले आहे... (Download started)", Toast.LENGTH_SHORT).show()
                                     return true
                                 }
 
@@ -1134,26 +1257,24 @@ fun BrowserScreen(
                 }
             )
 
-            // Animated download FAB that appears when a direct video stream link is intercepted
+            // Bottom floating download bar that activates when downloadable video stream is detected
             androidx.compose.animation.AnimatedVisibility(
                 visible = detectedVideoUrl != null,
-                enter = scaleIn() + fadeIn(),
-                exit = scaleOut() + fadeOut(),
+                enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+                exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
                 modifier = Modifier
-                    .align(Alignment.BottomEnd)
+                    .align(Alignment.BottomCenter)
                     .padding(16.dp)
             ) {
-                FloatingActionButton(
+                ExtendedFloatingActionButton(
                     onClick = { showBottomSheet = true },
+                    icon = { Icon(Icons.Default.Download, contentDescription = "Download") },
+                    text = { Text("व्हिडिओ डाऊनलोड करा (Download Stream)", fontWeight = FontWeight.Bold) },
                     containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.ArrowDownward,
-                        contentDescription = "Download Video",
-                        modifier = Modifier.size(32.dp)
-                    )
-                }
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    shape = RoundedCornerShape(16.dp),
+                    elevation = FloatingActionButtonDefaults.elevation(8.dp)
+                )
             }
         }
 

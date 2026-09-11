@@ -195,9 +195,10 @@ class MainActivity : ComponentActivity() {
             permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
         
-        // Read permission depends on Android version
+        // Read & notification permissions depend on Android version
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.READ_MEDIA_VIDEO)
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
         } else {
             permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
         }

@@ -3,7 +3,7 @@ package com.rk.downloader.utils
 import android.content.Context
 import android.util.Log
 import com.rk.downloader.config.AdminConfig
-import com.rk.downloader.data.DownloadOption
+import com.rk.downloader.data.ExtractionResult
 import com.rk.downloader.data.VideoInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -14,116 +14,179 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-object VideoExtractor {
-    private const val TAG = "VideoExtractor"
-    
+/**
+ * Service interface for media stream extraction implementations.
+ */
+interface ExtractorService {
+    suspend fun extract(context: Context, url: String, platform: SupportedPlatform): ExtractionResult?
+}
+
+/**
+ * Primary Layer: Free Public REST API (Cobalt API mirrors with user-configurable endpoints).
+ */
+class PrimaryRestExtractor : ExtractorService {
     private val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
+        .connectTimeout(12, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
         .build()
 
-    suspend fun extractVideo(context: Context, url: String): VideoInfo? = withContext(Dispatchers.IO) {
-        val extractorUrl = AdminConfig.getExtractorUrl(context)
-        if (extractorUrl.isEmpty()) {
-            Log.e(TAG, "Cobalt Extractor URL is not configured.")
-            return@withContext null
+    override suspend fun extract(context: Context, url: String, platform: SupportedPlatform): ExtractionResult? = withContext(Dispatchers.IO) {
+        val configuredUrl = AdminConfig.getExtractorUrl(context)
+        
+        // Build an ordered list of viable public Cobalt REST API endpoints
+        val endpoints = mutableListOf<String>()
+        if (configuredUrl.isNotEmpty()) {
+            endpoints.add(configuredUrl)
+            val fallbackV7 = if (configuredUrl.endsWith("/")) "${configuredUrl}api/json" else "$configuredUrl/api/json"
+            endpoints.add(fallbackV7)
         }
+        endpoints.add("https://cobalt.api.red.gd")
+        endpoints.add("https://api.cobalt.tools")
 
-        // Try direct POST to root endpoint (Cobalt v10 syntax)
-        val result = tryExtractor(extractorUrl, url)
-        if (result != null) return@withContext result
+        for (endpoint in endpoints) {
+            try {
+                val postData = JSONObject().apply {
+                    put("url", url)
+                    put("videoQuality", "720")
+                    put("downloadMode", "auto")
+                }
 
-        // Fallback to POST /api/json (Cobalt v7 syntax)
-        val fallbackUrl = if (extractorUrl.endsWith("/")) "${extractorUrl}api/json" else "$extractorUrl/api/json"
-        return@withContext tryExtractor(fallbackUrl, url)
-    }
+                val mediaType = "application/json; charset=utf-8".toMediaType()
+                val requestBody = postData.toString().toRequestBody(mediaType)
 
-    private fun tryExtractor(apiUrl: String, videoUrl: String): VideoInfo? {
-        try {
-            val postData = JSONObject().apply {
-                put("url", videoUrl)
-                put("videoQuality", "720")
-                put("downloadMode", "auto")
-            }
+                val request = Request.Builder()
+                    .url(endpoint)
+                    .header("Accept", "application/json")
+                    .header("Content-Type", "application/json")
+                    // Desktop Chrome User-Agent bypasses Cloudflare anti-bot checks on public mirrors
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+                    .post(requestBody)
+                    .build()
 
-            val mediaType = "application/json; charset=utf-8".toMediaType()
-            val requestBody = postData.toString().toRequestBody(mediaType)
+                client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val bodyStr = response.body?.string() ?: return@use
+                        val jsonObj = JSONObject(bodyStr)
+                        val status = jsonObj.optString("status")
 
-            val request = Request.Builder()
-                .url(apiUrl)
-                .header("Accept", "application/json")
-                .header("Content-Type", "application/json")
-                // Sending a standard Chrome User-Agent prevents Cloudflare blocks on public instances
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                .post(requestBody)
-                .build()
-
-            client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
-                    val bodyStr = response.body?.string() ?: return null
-                    val jsonObj = JSONObject(bodyStr)
-                    val status = jsonObj.optString("status")
-
-                    // 1. Single file stream output (Cobalt v10 / v7)
-                    if (status == "stream" || status == "redirect") {
-                        val downloadUrl = jsonObj.optString("url")
-                        val filename = jsonObj.optString("filename", "Social Video")
-                        if (downloadUrl.isNotEmpty()) {
-                            val options = listOf(
-                                DownloadOption(
-                                    quality = "Video MP4 (Auto)",
+                        // 1. Single stream or redirect output
+                        if (status == "stream" || status == "redirect") {
+                            val downloadUrl = jsonObj.optString("url")
+                            val filename = jsonObj.optString("filename", "${platform.name.lowercase()}_video.mp4")
+                            if (downloadUrl.isNotEmpty()) {
+                                return@withContext ExtractionResult(
+                                    streamUrl = downloadUrl,
+                                    title = filename.substringBeforeLast(".").ifEmpty { "${platform.displayName} Video" },
+                                    quality = "720p HD",
                                     format = "MP4",
-                                    downloadUrl = downloadUrl
+                                    filename = filename
                                 )
-                            )
-                            return VideoInfo(title = filename, sourceUrl = videoUrl, options = options)
+                            }
                         }
-                    } 
-                    // 2. Picker array output (Combined and separate streams)
-                    else if (status == "picker") {
-                        val pickerArray = jsonObj.optJSONArray("picker")
-                        val options = mutableListOf<DownloadOption>()
-                        if (pickerArray != null) {
-                            for (i in 0 until pickerArray.length()) {
-                                val item = pickerArray.getJSONObject(i)
+                        // 2. Picker array output (formats list)
+                        else if (status == "picker") {
+                            val pickerArray = jsonObj.optJSONArray("picker")
+                            if (pickerArray != null && pickerArray.length() > 0) {
+                                val item = pickerArray.getJSONObject(0)
                                 val downloadUrl = item.optString("url")
                                 if (downloadUrl.isNotEmpty()) {
                                     val type = item.optString("type", "video")
-                                    val quality = item.optString("quality", "Auto")
-                                    options.add(
-                                        DownloadOption(
-                                            quality = if (type == "audio") "Audio Only (MP3)" else "Video MP4 ($quality)",
-                                            format = if (type == "audio") "MP3" else "MP4",
-                                            downloadUrl = downloadUrl
-                                        )
+                                    val quality = item.optString("quality", "HD")
+                                    return@withContext ExtractionResult(
+                                        streamUrl = downloadUrl,
+                                        title = "${platform.displayName} Video",
+                                        quality = quality,
+                                        format = if (type == "audio") "MP3" else "MP4",
+                                        filename = "${platform.name.lowercase()}_${System.currentTimeMillis()}.${if (type == "audio") "mp3" else "mp4"}"
                                     )
                                 }
                             }
                         }
-                        if (options.isNotEmpty()) {
-                            val title = jsonObj.optString("title", "Social Media Video")
-                            return VideoInfo(title = title, sourceUrl = videoUrl, options = options)
-                        }
-                    }
-                    // 3. Fallback for raw direct responses
-                    else if (jsonObj.has("url")) {
-                        val downloadUrl = jsonObj.optString("url")
-                        if (downloadUrl.isNotEmpty()) {
-                            val options = listOf(
-                                DownloadOption(
-                                    quality = "Video MP4 (Auto)",
+                        // 3. Fallback direct url property
+                        else if (jsonObj.has("url")) {
+                            val downloadUrl = jsonObj.optString("url")
+                            if (downloadUrl.isNotEmpty()) {
+                                return@withContext ExtractionResult(
+                                    streamUrl = downloadUrl,
+                                    title = "${platform.displayName} Video",
+                                    quality = "HD",
                                     format = "MP4",
-                                    downloadUrl = downloadUrl
+                                    filename = "${platform.name.lowercase()}_${System.currentTimeMillis()}.mp4"
                                 )
-                            )
-                            return VideoInfo(title = "Social Media Video", sourceUrl = videoUrl, options = options)
+                            }
                         }
                     }
                 }
+            } catch (e: Exception) {
+                Log.d("PrimaryRestExtractor", "Endpoint $endpoint failed: ${e.message}")
+            }
+        }
+        return@withContext null
+    }
+}
+
+/**
+ * Secondary Layer: Fallback headless WebResolver DOM/stream sniffer.
+ */
+class FallbackWebExtractor : ExtractorService {
+    override suspend fun extract(context: Context, url: String, platform: SupportedPlatform): ExtractionResult? {
+        return WebResolver.resolve(context, url, platform)
+    }
+}
+
+/**
+ * Unified Extractor maintaining a chain-of-responsibility:
+ * Primary (REST API) -> Secondary (Headless WebResolver).
+ */
+object VideoExtractor {
+    private const val TAG = "VideoExtractor"
+
+    private val primaryService: ExtractorService = PrimaryRestExtractor()
+    private val fallbackService: ExtractorService = FallbackWebExtractor()
+
+    /**
+     * Executes the unified extraction pipeline:
+     * 1. Detect platform using regex.
+     * 2. Attempt Primary REST API extraction.
+     * 3. Fallback to headless WebResolver if REST API fails or is rate-limited.
+     * 4. Returns standardized ExtractionResult or null.
+     */
+    suspend fun extract(context: Context, url: String): ExtractionResult? = withContext(Dispatchers.IO) {
+        val platform = SupportedPlatform.detect(url)
+        Log.d(TAG, "Starting extraction pipeline for platform: ${platform.displayName}, URL: $url")
+
+        // 1. Primary Layer: REST API
+        try {
+            val restResult = primaryService.extract(context, url, platform)
+            if (restResult != null && restResult.streamUrl.isNotEmpty()) {
+                Log.d(TAG, "Primary REST API extraction succeeded.")
+                return@withContext restResult
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed extraction query for $apiUrl: ${e.message}")
+            Log.w(TAG, "Primary REST API error: ${e.message}")
         }
-        return null
+
+        // 2. Secondary Layer: Headless WebResolver
+        Log.d(TAG, "Primary REST API failed or rate-limited. Initiating Secondary WebResolver...")
+        try {
+            val webResult = fallbackService.extract(context, url, platform)
+            if (webResult != null && webResult.streamUrl.isNotEmpty()) {
+                Log.d(TAG, "Secondary WebResolver extraction succeeded.")
+                return@withContext webResult
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Secondary WebResolver error: ${e.message}")
+        }
+
+        Log.w(TAG, "All automated extraction layers failed for: $url")
+        return@withContext null
+    }
+
+    /**
+     * Backward-compatible bridge returning legacy VideoInfo for UI components.
+     */
+    suspend fun extractVideo(context: Context, url: String): VideoInfo? {
+        val result = extract(context, url) ?: return null
+        return result.toVideoInfo(url)
     }
 }

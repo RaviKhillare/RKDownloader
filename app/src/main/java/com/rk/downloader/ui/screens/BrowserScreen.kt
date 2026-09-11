@@ -19,6 +19,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -29,6 +31,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.rk.downloader.R
@@ -54,7 +57,7 @@ fun BrowserScreen(
     var webView: WebView? by remember { mutableStateOf(null) }
     var currentUrl by remember { mutableStateOf(initialUrl) }
     var searchInput by remember { mutableStateOf("") }
-    var pageTitle by remember { mutableStateOf("Downloader Web") }
+    var pageTitle by remember { mutableStateOf("Web Browser") }
     
     var loadingProgress by remember { mutableIntStateOf(0) }
     var isPageLoading by remember { mutableStateOf(false) }
@@ -99,32 +102,58 @@ fun BrowserScreen(
         verticalArrangement = Arrangement.SpaceBetween
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            // Navigation controls and address bar
+            // Material 3 TopAppBar with Navigation & Actions
+            TopAppBar(
+                title = {
+                    Column {
+                        Text(
+                            text = pageTitle,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = currentUrl,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                },
+                navigationIcon = {
+                    IconButton(
+                        onClick = { webView?.goBack() },
+                        enabled = webView?.canGoBack() == true
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(
+                        onClick = { webView?.goForward() },
+                        enabled = webView?.canGoForward() == true
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Forward")
+                    }
+                    IconButton(onClick = { webView?.reload() }) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Reload")
+                    }
+                }
+            )
+
+            // Address bar with clear and search actions
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(
-                    onClick = { webView?.goBack() },
-                    enabled = webView?.canGoBack() == true
-                ) {
-                    Icon(Icons.Default.ArrowBack, contentDescription = "Back")
-                }
-
-                IconButton(
-                    onClick = { webView?.goForward() },
-                    enabled = webView?.canGoForward() == true
-                ) {
-                    Icon(Icons.Default.ArrowForward, contentDescription = "Forward")
-                }
-
                 OutlinedTextField(
                     value = searchInput,
                     onValueChange = { searchInput = it },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(24.dp),
                     placeholder = { Text(stringResource(R.string.browser_search_hint)) },
                     singleLine = true,
@@ -132,10 +161,9 @@ fun BrowserScreen(
                     keyboardActions = KeyboardActions(onSearch = {
                         loadWebAddress(searchInput)
                     }),
-                    colors = TextFieldDefaults.outlinedTextFieldColors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outline
-                    ),
+                    leadingIcon = {
+                        Icon(Icons.Default.Search, contentDescription = "Search", tint = MaterialTheme.colorScheme.primary)
+                    },
                     trailingIcon = {
                         if (searchInput.isNotEmpty()) {
                             IconButton(onClick = { searchInput = "" }) {
@@ -144,22 +172,14 @@ fun BrowserScreen(
                         }
                     }
                 )
-
-                IconButton(onClick = { loadWebAddress(searchInput) }) {
-                    Icon(Icons.Default.Search, contentDescription = "Go")
-                }
-
-                IconButton(onClick = { webView?.reload() }) {
-                    Icon(Icons.Default.Refresh, contentDescription = "Reload")
-                }
             }
 
-            // Quick Third-Party Provider Switcher Bar
+            // Quick Platform & Downloader Switcher Chips
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                    .padding(horizontal = 12.dp, vertical = 2.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 AssistChip(
@@ -178,10 +198,8 @@ fun BrowserScreen(
                 )
 
                 AssistChip(
-                    onClick = {
-                        loadWebAddress("https://snapsave.app/")
-                    },
-                    label = { Text("SnapSave (FB/Insta)") }
+                    onClick = { loadWebAddress("https://snapsave.app/") },
+                    label = { Text("SnapSave") }
                 )
 
                 AssistChip(
@@ -196,24 +214,35 @@ fun BrowserScreen(
                 )
 
                 AssistChip(
-                    onClick = {
-                        loadWebAddress("https://www.y2mate.com/")
-                    },
+                    onClick = { loadWebAddress("https://www.y2mate.com/") },
                     label = { Text("Y2Mate") }
                 )
 
                 AssistChip(
-                    onClick = {
-                        loadWebAddress("https://www.google.com")
-                    },
-                    label = { Text("Google") }
+                    onClick = { loadWebAddress("https://x.com") },
+                    label = { Text("Twitter / X") }
+                )
+
+                AssistChip(
+                    onClick = { loadWebAddress("https://www.pinterest.com") },
+                    label = { Text("Pinterest") }
+                )
+
+                AssistChip(
+                    onClick = { loadWebAddress("https://www.threads.net") },
+                    label = { Text("Threads") }
+                )
+
+                AssistChip(
+                    onClick = { loadWebAddress("https://www.dailymotion.com") },
+                    label = { Text("Dailymotion") }
                 )
             }
 
-            // Loader Progress Bar
+            // Page Loading Linear Progress Indicator
             if (isPageLoading && loadingProgress < 100) {
                 LinearProgressIndicator(
-                    progress = loadingProgress / 100f,
+                    progress = { loadingProgress / 100f },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(3.dp),
@@ -222,7 +251,7 @@ fun BrowserScreen(
             }
         }
 
-        // Main WebView area
+        // Main WebView area with floating download bar
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -239,7 +268,7 @@ fun BrowserScreen(
                             useWideViewPort = true
                             loadWithOverviewMode = true
                             mediaPlaybackRequiresUserGesture = false
-                            // Prevent popup windows from hijacking or freezing webview
+                            // Block intrusive popup windows that hijack or freeze webview
                             setSupportMultipleWindows(false)
                             javaScriptCanOpenWindowsAutomatically = false
                             allowFileAccess = true
@@ -247,7 +276,7 @@ fun BrowserScreen(
                         }
 
                         // Native DownloadListener: Intercepts all file download requests from SaveFrom.net, SnapSave, etc.
-                        setDownloadListener { downloadUrl, userAgent, contentDisposition, mimetype, contentLength ->
+                        setDownloadListener { downloadUrl, _, contentDisposition, mimetype, _ ->
                             val guessedName = URLUtil.guessFileName(downloadUrl, contentDisposition, mimetype)
                             val sanitizedTitle = guessedName.substringBeforeLast(".").ifEmpty { "Video_${System.currentTimeMillis()}" }
                             val ext = if (guessedName.endsWith(".mp3", true) || mimetype?.contains("audio") == true) "mp3" else "mp4"
@@ -271,7 +300,7 @@ fun BrowserScreen(
                                     format = ext.uppercase()
                                 )
                             }
-                            Toast.makeText(context, "डाऊनलोड सुरू झाले आहे...", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "डाऊनलोड सुरू झाले आहे... (Download started)", Toast.LENGTH_SHORT).show()
                         }
                         
                         webViewClient = object : WebViewClient() {
@@ -295,7 +324,7 @@ fun BrowserScreen(
                                 val reqUrl = request?.url?.toString() ?: return false
                                 val lower = reqUrl.lowercase()
 
-                                // Directly download if URL points to an actual media stream/file
+                                // Directly download if URL points to an actual media stream or download URL
                                 if (lower.endsWith(".mp4") || lower.endsWith(".mp3") || lower.endsWith(".m4a") ||
                                     (lower.contains("googlevideo.com") && lower.contains("videoplayback")) ||
                                     (lower.contains("download") && (lower.contains(".mp4") || lower.contains("mime=video")))
@@ -310,7 +339,7 @@ fun BrowserScreen(
                                         quality = "Direct",
                                         format = ext.uppercase()
                                     )
-                                    Toast.makeText(context, "डाऊनलोड सुरू झाले आहे...", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "डाऊनलोड सुरू झाले आहे... (Download started)", Toast.LENGTH_SHORT).show()
                                     return true
                                 }
 
@@ -360,26 +389,24 @@ fun BrowserScreen(
                 }
             )
 
-            // Animated download FAB that appears when a direct video stream link is intercepted
+            // Bottom floating download bar that activates when downloadable video stream is detected
             androidx.compose.animation.AnimatedVisibility(
                 visible = detectedVideoUrl != null,
-                enter = scaleIn() + fadeIn(),
-                exit = scaleOut() + fadeOut(),
+                enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+                exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
                 modifier = Modifier
-                    .align(Alignment.BottomEnd)
+                    .align(Alignment.BottomCenter)
                     .padding(16.dp)
             ) {
-                FloatingActionButton(
+                ExtendedFloatingActionButton(
                     onClick = { showBottomSheet = true },
+                    icon = { Icon(Icons.Default.Download, contentDescription = "Download") },
+                    text = { Text("व्हिडिओ डाऊनलोड करा (Download Stream)", fontWeight = FontWeight.Bold) },
                     containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.ArrowDownward,
-                        contentDescription = "Download Video",
-                        modifier = Modifier.size(32.dp)
-                    )
-                }
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    shape = RoundedCornerShape(16.dp),
+                    elevation = FloatingActionButtonDefaults.elevation(8.dp)
+                )
             }
         }
 
